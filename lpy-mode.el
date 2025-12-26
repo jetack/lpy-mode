@@ -74,7 +74,8 @@ Examples:
     "let"
     "with" "with/a"
     "fn" "fn/a"
-    "class")
+    "class"
+    "deco")
   "Symbols that will have following lines indented +1 when matched at start.
 
 Examples:
