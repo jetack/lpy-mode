@@ -60,8 +60,8 @@
 (try (do
        (import lpy-autocomplete)
        (= __JEDHY (lpy-autocomplete.API :locals- (locals) :globals- (globals)))
-       \"Started Lpy-AC\")
-     (except [Exception as E] \"Failed to start Lpy-AC\"))"
+       \"Started lpy-autocomplete\")
+     (except [Exception as E] \"Failed to start lpy-autocomplete\"))"
   "Text to send to internal Lpy process to setup `lpy-autocomplete'.")
 
 (defconst lpy-autocomplete--startup-success-text "'Started lpy-autocomplete'"
@@ -87,7 +87,7 @@
 
 ;;; Namespace Management
 
-(defconst lpy-shell--import-rgx
+(defconst lpy-autocomplete--import-rgx
   (rx "(" (0+ space) (or "import" "require" "sys.path.extend"))
   "A regex used to extract importing-related forms for updating IDE features.")
 
@@ -104,7 +104,7 @@ Not bound atm as this is temporary, run via M-x or bind yourself."
   (save-excursion
     (goto-char (point-min))
 
-    (while (re-search-forward lpy-shell--import-rgx nil t)
+    (while (re-search-forward lpy-autocomplete--import-rgx nil t)
       (-when-let (lpy-form (lpy--current-form-string))
         (let ((text (s-join " " (s-lines lpy-form))))
           (lpy-shell--redirect-send-internal text))))

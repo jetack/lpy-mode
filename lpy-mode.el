@@ -54,10 +54,12 @@
 ;; See other files for configuring specific aspects of Lpy, like the shell.
 
 (defvar lpy-indent--exactly
-  '("when" "unless"
-    "for" "for*" "for/a" "for/a*"
+  '("for" "async-for"
     "while"
-    "except" "catch")
+    "except"
+    "match" "case"
+    "when"
+    "comment")
   "Symbols that will have following lines indented +1 when matched.
 
 Examples:
@@ -70,10 +72,9 @@ Examples:
 
 
 (defvar lpy-indent--fuzzily
-  '("def"
-    "let"
-    "with" "with/a"
-    "fn" "fn/a"
+  '("def" "async-def"
+    "with" "async-with"
+    "fn"
     "class"
     "deco")
   "Symbols that will have following lines indented +1 when matched at start.
@@ -236,7 +237,7 @@ commands."
   (setq-local syntax-propertize-function 'lpy-syntax-propertize-function)
 
   ;; AutoHighlightSymbol needs adjustment for symbol recognition
-  (setq-local ahs-include "^[0-9A-Za-z/_.,:;*+=&%|$#@!^?-~\-]+$")
+  (setq-local ahs-include "^[0-9A-Za-z/_.,:;*+=&%|$#@!^?~-]+$")
 
   ;; Lispy comment syntax
   (setq-local comment-start ";")

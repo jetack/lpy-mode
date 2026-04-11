@@ -38,99 +38,7 @@
 ;;;; Lpy Builtins
 
 (defconst lpy-font-lock--lpy-builtins
-  '("*map"
-    "accumulate"
-    "assoc"
-    "butlast"
-    "calling-module-name"
-    "chain"
-    "coll?"
-    "combinations"
-    "comp"
-    "complement"
-    "compress"
-    "constantly"
-    "count"
-    "cut"
-    "cycle"
-    "dec"
-    "defmain"
-    "del"
-    "disassemble"
-    "distinct"
-    "doto"
-    "drop"
-    "drop-last"
-    "drop-while"
-    "empty?"
-    "even?"
-    "every?"
-    "filter"
-    "first"
-    "flatten"
-    "float?"
-    "fraction"
-    "gensym"
-    "get"
-    "group-by"
-    "identity"
-    "inc"
-    "instance?"
-    "integer"
-    "integer-char?"
-    "integer?"
-    "interleave"
-    "interpose"
-    "is"
-    "is-not"
-    "islice"
-    "iterable?"
-    "iterate"
-    "iterator?"
-    "juxt"
-    "keyword"
-    "keyword?"
-    "last"
-    "macroexpand"
-    "macroexpand-1"
-    "merge-with"
-    "multicombinations"
-    "name"
-    "neg?"
-    "none?"
-    "nth"
-    "numeric?"
-    "odd?"
-    "partition"
-    "permutations"
-    "pos?"
-    "product"
-    "quasiquote"
-    "quote"
-    "read"
-    "read-str"
-    "reduce"
-    "remove"
-    "repeat"
-    "repeatedly"
-    "rest"
-    "second"
-    "setv"
-    "some"
-    "string"
-    "string?"
-    "symbol?"
-    "take"
-    "take-nth"
-    "take-while"
-    "tee"
-    "unquote"
-    "unquote-splice"
-    "xor"
-    "zero?"
-    "zip"
-    "zip-longest"
-    "--macros--" "__macros__")
+  '()
   "Lpy-only builtin names.")
 
 ;;;; Python Builtins
@@ -236,20 +144,7 @@
 ;;;; Definitions
 
 (defconst lpy-font-lock--definitions
-  '(;; Functions
-    "defn" "defn/a"
-
-    ;; Macros
-    "defmacro" "defmacro/g!" "defmacro!"
-
-    ;; Tag Macros
-    "deftag"
-
-    ;; Defining __main__
-    "defmain"
-
-    ;; Multi-methods
-    "defmulti" "defmethod")
+  '("def" "async-def" "defmacro")
   "Names in Lpy that define functions, macros, etc.")
 
 ;;;; Operators
@@ -264,57 +159,51 @@
 
 (defconst lpy-font-lock--special-names
   '(;; Looping
-    "for" "for/a"
-    "dfor" "lfor" "sfor"  ; comprehensions
-    "loop" "recur"  ; lpy.contrib.loop
-
-    ;; Threading
-    "->" "->>" "as->"
+    "for" "async-for"
 
     ;; Flow control
     "return"
-    "if" "if*" "if-not" "lif" "lif-not"
-    "else" "unless" "when"
+    "if" "ife"
+    "when"
+    "cond" "conde"
+    "else"
     "break" "continue" "while"
-    "cond"
+    "match" "case"
     "do"
+    "comment"
+    "->" "->>"
+    "pass"
 
     ;; Functional
-    "fn" "fn/a"
+    "fn"
+    "lambda"
     "await"
     "yield" "yield-from"
-    "with" "with*" "with/a" "with/a*"
-    "with-gensyms"
+    "with" "async-with"
+
+    ;; Decorators / deletion
+    "deco"
+    "del"
 
     ;; Error Handling
-    "except" "try" "throw" "raise" "catch" "finally" "assert"
+    "except" "try" "raise" "finally" "assert"
 
     ;; Python builtins (and shadowed calls to builtins)
     "print"
     "not" "and" "or"
-    "in" "not-in"
+    "in"
 
     ;; Namespaces
     "global" "nonlocal"
 
     ;; Evaluation
-    "eval" "eval-and-compile" "eval-when-compile")
+    "eval")
   "Special names like compiler stuff to highlight as keywords.")
 
 ;;;; Anaphorics
 
 (defconst lpy-font-lock--anaphorics
-  '("ap-dotimes"
-    "ap-each"
-    "ap-each-while"
-    "ap-filter"
-    "ap-first"
-    "ap-if"
-    "ap-last"
-    "ap-map"
-    "ap-map-when"
-    "ap-reduce"
-    "ap-reject")
+  '()
   "Lpy anaphoric contrib keywords.")
 
 ;;; Keywords
@@ -380,7 +269,8 @@
 
 (defconst lpy-font-lock--kwds-class
   (list
-   (rx (group-n 1 "defclass")
+   (rx "("
+       (group-n 1 "class")
        (1+ space)
        (group-n 2 (1+ word)))
 
@@ -390,22 +280,20 @@
 
 (defconst lpy-font-lock--kwds-decorators
   (list
-   (rx
-    (or (: "#@"
-           (syntax open-parenthesis))
-        (: symbol-start
-           "with-decorator"
-           symbol-end
-           (1+ space)))
-    (1+ word))
+   (rx symbol-start
+       "deco"
+       symbol-end
+       (1+ space)
+       (1+ word))
 
    '(0 font-lock-type-face))
-  "Lpylight the symbol after `#@' or `with-decorator' macros keywords.")
+  "Lpylight the symbol after `deco' macros keywords.")
 
 (defconst lpy-font-lock--kwds-imports
   (list
    (rx symbol-start
        (or "import"
+           "from"
            "require"
            ":as")
        symbol-end)
@@ -487,7 +375,7 @@
 (defconst lpy-font-lock--kwds-variables
   (list
    (rx symbol-start
-       "setv"
+       "="
        symbol-end
        (1+ space)
        (group (1+ word)))
@@ -614,7 +502,7 @@ applied with success to `ielm'."
   "All Lpy font lock keywords.")
 
 (defconst inferior-lpy-font-lock-kwds
-  (-map #'lpy-font-lock--kwd->comint-kwd lpy-font-lock-kwds)
+  (-map #'lpy-font-lock--kwd->comint-kwd (-non-nil lpy-font-lock-kwds))
   "Comint-compatible version of `lpy-font-lock-kwds'.
 
 See `lpy-font-lock--kwd->comint-kwd' for details.")

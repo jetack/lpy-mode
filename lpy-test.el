@@ -115,7 +115,7 @@ If no name is given, then process-based tests will be skipped.")
 ;; as they do additional checks based on comint variables.
 (buttercup-define-matcher :shell-faces (text)
   (let ((text (funcall text))
-        (prompt-length (length "=> ")))
+        (prompt-length (length "repl> ")))
     ;; Build the Lpy shell buffer and manually enable font locking
     (lpy-test--run-lpy)
     (lpy-inferior--support-font-locking-input)

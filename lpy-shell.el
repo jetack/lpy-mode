@@ -330,8 +330,10 @@ a blog post: http://www.modernemacs.com/post/comint-highlighting/."
 (defvar sy-inferior-lpy-prompt "repl> ")
 
 (defun sy-inferior-preoutput-filter (output)
-  (let ((prompt (regexp-quote sy-inferior-lpy-prompt)))
-    (concat (replace-regexp-in-string (concat "^" (regexp-quote sy-inferior-lpy-prompt)) "" output)
+  (let ((stripped (replace-regexp-in-string
+                   (concat "^" (regexp-quote sy-inferior-lpy-prompt)) "" output)))
+    ;; strip continuation prompts (e.g. "... " or "... ... ") emitted per newline
+    (concat (replace-regexp-in-string "^\\(\\.\\.\\.[ ]?\\)+" "" stripped)
             sy-inferior-lpy-prompt)))
 
 ;;;###autoload
