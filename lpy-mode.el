@@ -257,6 +257,53 @@ commands."
   (when (fboundp #'sp-local-pair)
     (sp-local-pair '(lpy-mode inferior-lpy-mode) "`" "`" :actions nil)))
 
+(defconst lpy-mode--python-string-prefixes
+  '("f" "r" "b" "u" "t"
+    "fr" "rf" "br" "rb" "tr" "rt")
+  "Valid Python string literal prefixes, lowercased.
+Covers f-strings, raw, bytes, unicode (compat), t-strings (PEP 750),
+and their valid r-combinations.  See URL
+`https://docs.python.org/3/reference/lexical_analysis.html'.")
+
+(defun lpy-mode--python-string-prefix-before-point-p ()
+  "Return non-nil when text immediately before point is a Python string prefix.
+The prefix must stand alone -- the char before it must be absent (BOB) or a
+non-alphanumeric, non-`_' char -- so tokens like `def' or `myfn' don't match."
+  (let* ((start (max (point-min) (- (point) 2)))
+         (chunk (downcase (buffer-substring-no-properties start (point))))
+         (standalone-p
+          (lambda (n)
+            (let ((p (- (point) n)))
+              (or (<= p (point-min))
+                  (let ((c (char-before p)))
+                    (not (or (and (>= c ?a) (<= c ?z))
+                             (and (>= c ?A) (<= c ?Z))
+                             (and (>= c ?0) (<= c ?9))
+                             (= c ?_)))))))))
+    (or (and (>= (length chunk) 2)
+             (member (substring chunk -2) lpy-mode--python-string-prefixes)
+             (funcall standalone-p 2))
+        (and (>= (length chunk) 1)
+             (member (substring chunk -1) lpy-mode--python-string-prefixes)
+             (funcall standalone-p 1)))))
+
+(defun lpy-mode--paredit-no-space-before-string-prefix (endp delimiter)
+  "Suppress paredit's inserted space before an opening `\"'.
+Only suppresses when DELIMITER is `\"', ENDP is nil (we're inserting the
+opening quote), and the preceding text is a Python string prefix."
+  (not (and (not endp)
+            (eq delimiter ?\")
+            (lpy-mode--python-string-prefix-before-point-p))))
+
+(defun lpy-mode--support-paredit ()
+  "Integrate with `paredit-mode' when present.
+Teach paredit not to insert a space before `\"' after a Python string prefix
+\(so `f\"...\"' and `r\"...\"' are typed naturally)."
+  (when (boundp 'paredit-space-for-delimiter-predicates)
+    (make-local-variable 'paredit-space-for-delimiter-predicates)
+    (add-to-list 'paredit-space-for-delimiter-predicates
+                 #'lpy-mode--paredit-no-space-before-string-prefix)))
+
 ;;;; Lpy-autocomplete
 
 (defun lpy-mode--setup-lpy-autocomplete ()
@@ -292,6 +339,7 @@ commands."
   (lpy-mode--setup-syntax)
 
   (lpy-mode--support-smartparens)
+  (lpy-mode--support-paredit)
 
   (when lpy-autocomplete--enable?
     (lpy-mode--setup-lpy-autocomplete)
