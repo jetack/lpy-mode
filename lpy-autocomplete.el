@@ -59,7 +59,7 @@
   "(require lispy.macros *)
 (try (do
        (import lpy-autocomplete)
-       (= __JEDHY (lpy-autocomplete.API :locals- (locals) :globals- (globals)))
+       (= __LPY_AC__ (lpy-autocomplete.API :locals- (locals) :globals- (globals)))
        \"Started lpy-autocomplete\")
      (except [Exception as E] \"Failed to start lpy-autocomplete\"))"
   "Text to send to internal Lpy process to setup `lpy-autocomplete'.")
@@ -68,7 +68,7 @@
   "Text identifying successful startup of lpy-autocomplete.")
 
 (defconst lpy-autocomplete--reset-namespace-code
-  "(= __JEDHY (lpy-autocomplete.API :locals- (locals) :globals- (globals)))"
+  "(= __LPY_AC__ (lpy-autocomplete.API :locals- (locals) :globals- (globals)))"
   "Text to send to make Lpy-autocomplete's namespace current.")
 
 ;;; Startup
@@ -217,7 +217,7 @@ Not bound atm as this is temporary, run via M-x or bind yourself."
   (unless (lpy-autocomplete--method-call? prefix-str)
     (-some->>
         prefix-str
-      (format "(__JEDHY.complete \"%s\")")
+      (format "(__LPY_AC__.complete \"%s\")")
       lpy-shell--redirect-send-internal
       lpy-autocomplete--format-output-tuple)))
 
@@ -225,7 +225,7 @@ Not bound atm as this is temporary, run via M-x or bind yourself."
   "Get company annotation for a CANDIDATE-STR."
   (-some->>
       candidate-str
-    (format "(__JEDHY.annotate \"%s\")")
+    (format "(__LPY_AC__.annotate \"%s\")")
     lpy-shell--redirect-send-internal
     lpy-autocomplete--format-output-str))
 
@@ -233,7 +233,7 @@ Not bound atm as this is temporary, run via M-x or bind yourself."
   "Get eldoc docstring for a CANDIDATE-STR."
   (-some->>
       candidate-str
-    (format "(__JEDHY.docs \"%s\")")
+    (format "(__LPY_AC__.docs \"%s\")")
     lpy-shell--redirect-send-internal
     lpy-autocomplete--format-output-str
     lpy-autocomplete--quickfix-eldoc-dot-dsl-syntax-errors
@@ -243,7 +243,7 @@ Not bound atm as this is temporary, run via M-x or bind yourself."
   "Get full, multi-line docs for a CANDIDATE-STR."
   (-some->>
       candidate-str
-    (format "(__JEDHY.full-docs \"%s\")")
+    (format "(__LPY_AC__.full-docs \"%s\")")
     lpy-shell--redirect-send-internal
     lpy-autocomplete--format-output-str
     s-chomp
