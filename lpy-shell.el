@@ -26,7 +26,7 @@
 ;; This file implements `inferior-lpy-mode', commands to send and get text
 ;; from Lpy interpreters, and other repl components.
 
-;; See `lpy-autocomplete.el' which builds on these commands to support IDE components.
+;; See `lpy-nrepl.el' for nREPL-based eval, completion, and IDE integration.
 
 ;;; Code:
 
@@ -163,10 +163,9 @@
 
 ;; They are rewrites of some components of comint's redirection commands.
 ;; The redirection add-on for comint was developed to run SQL on a process
-;; with state. Similarly, we maintain state in lpy-autocomplete's namespace. There
-;; are better, but more advanced, solutions. The one chosen should allow a
-;; pretty quick, and !easily testable!, integration of lpy-autocomplete. It also allows
-;; some fancier things w.r.t shell output transformations and fontifying.
+;; with state. There are better, but more advanced, solutions (see lpy-nrepl.el
+;; for the nREPL-based approach). The comint redirection allows shell output
+;; transformations and fontifying.
 
 ;; The commands are rewritten because 1. we don't need all the options 2. we
 ;; require a timeout during the accept process output 3. we have some macros
