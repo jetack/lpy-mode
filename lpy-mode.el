@@ -33,7 +33,7 @@
 
 ;; Syntax highlighting and related can be found in `lpy-font-lock.el'
 ;; REPL support can be found in `lpy-shell.el'
-;; IDE components support can be found in `lpy-autocomplete.el'
+;; IDE components (eval, completion, macroexpand) are in `lpy-nrepl.el'
 ;; Common utilities and requires can be found in `lpy-base.el'
 ;; Testing utilities for the test/ folder can be found in `lpy-test.el'
 
@@ -46,7 +46,7 @@
 
 (require 'lpy-font-lock)
 (require 'lpy-shell)
-(require 'lpy-autocomplete)
+(require 'lpy-nrepl)
 
 ;;; Configuration
 ;;;; Indentation
@@ -304,26 +304,18 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
     (add-to-list 'paredit-space-for-delimiter-predicates
                  #'lpy-mode--paredit-no-space-before-string-prefix)))
 
-;;;; Lpy-autocomplete
+;;;; IDE support (nREPL-backed)
 
-(defun lpy-mode--setup-lpy-autocomplete ()
-  "Auto-start lpy-autocomplete for company, eldoc, and other `lpy-mode' IDE features."
-  (let ((lpy-shell--notify?))
-    (run-lpy-autocomplete))  ; Unlikely that lpy-autocomplete installed globally so dont warn
+(defun lpy-mode--setup-completion ()
+  "Add nREPL completion-at-point function."
+  (add-hook 'completion-at-point-functions
+            #'lpy-nrepl-completion-at-point nil t))
 
-  (when (fboundp 'pyvenv-mode)
-    (add-hook 'pyvenv-post-activate-hooks #'run-lpy-autocomplete)
-    (add-hook 'pyvenv-post-deactivate-hooks
-              #'run-lpy-autocomplete--pyvenv-post-deactive-hook)))
-
-(defun lpy-mode--support-company ()
-  "Support `company-mode' autocompletion."
-  (add-to-list 'company-backends #'company-lpy))
-
-(defun lpy-mode--support-eldoc ()
-  "Support `eldoc-mode' with lispy docstring leaders."
-  (setq-local eldoc-documentation-function #'lpy-eldoc-documentation-function)
-  (eldoc-mode +1))
+(defun lpy-mode--setup-eldoc ()
+  "Add nREPL-backed eldoc support."
+  (add-hook 'eldoc-documentation-functions
+            #'lpy-nrepl-eldoc-function nil t)
+  (eldoc-mode 1))
 
 ;;; lpy-mode
 
@@ -341,27 +333,23 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
   (lpy-mode--support-smartparens)
   (lpy-mode--support-paredit)
 
-  (when lpy-autocomplete--enable?
-    (lpy-mode--setup-lpy-autocomplete)
-
-    (lpy-mode--support-eldoc)
-
-    (when (featurep 'company)
-      (lpy-mode--support-company)
-      (add-hook 'inferior-lpy-mode-hook #'lpy-mode--support-company))))
+  (lpy-mode--setup-completion)
+  (lpy-mode--setup-eldoc))
 
 ;;; Bindings
 
 (set-keymap-parent lpy-mode-map lisp-mode-shared-map)
 
-;;;; Shell
+;;;; Shell / nREPL
 
-(define-key lpy-mode-map (kbd "C-c C-z") #'run-lpy)
+(define-key lpy-mode-map (kbd "C-c C-z") #'lpy-nrepl-switch-to-repl)
 
-(define-key lpy-mode-map (kbd "C-c C-b") #'lpy-shell-eval-buffer)
-(define-key lpy-mode-map (kbd "C-c C-r") #'lpy-shell-eval-region)
-(define-key lpy-mode-map (kbd "C-c C-e") #'lpy-shell-eval-last-sexp)
-(define-key lpy-mode-map (kbd "C-M-x") #'lpy-shell-eval-current-form)
+(define-key lpy-mode-map (kbd "C-c C-b") #'lpy-nrepl-eval-buffer-contents-or-shell)
+(define-key lpy-mode-map (kbd "C-c C-k") #'lpy-nrepl-eval-buffer-or-shell)
+(define-key lpy-mode-map (kbd "C-c C-r") #'lpy-nrepl-eval-region-or-shell)
+(define-key lpy-mode-map (kbd "C-c C-e") #'lpy-nrepl-eval-last-sexp-or-shell)
+(define-key lpy-mode-map (kbd "C-M-x") #'lpy-nrepl-eval-current-form-or-shell)
+(define-key lpy-mode-map (kbd "C-c C-m") #'lpy-nrepl-macroexpand)
 
 (define-key lpy-mode-map (kbd "C-c C-d d") #'lpy-describe-thing-at-point)
 (define-key lpy-mode-map (kbd "C-c C-d C-d") #'lpy-describe-thing-at-point)
@@ -375,6 +363,28 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
   (insert "(do (import pdb) (pdb.set-trace))"))
 
 (define-key lpy-mode-map (kbd "C-c C-t") #'lpy-insert-pdb)
+
+;;;; Menu
+
+(easy-menu-define lpy-mode-menu lpy-mode-map
+  "Menu for LisPython mode."
+  '("LisPython"
+    ["Eval Last Sexp (C-c C-e)" lpy-nrepl-eval-last-sexp-or-shell]
+    ["Eval Current Form (C-M-x)" lpy-nrepl-eval-current-form-or-shell]
+    ["Eval Region (C-c C-r)" lpy-nrepl-eval-region-or-shell]
+    ["Eval Buffer (C-c C-b)" lpy-nrepl-eval-buffer-contents-or-shell]
+    ["Load File (C-c C-k)" lpy-nrepl-eval-buffer-or-shell]
+    "---"
+    ["Macroexpand (C-c C-m)" lpy-nrepl-macroexpand]
+    ["Describe Symbol (C-c C-d d)" lpy-describe-thing-at-point]
+    "---"
+    ["Show REPL (C-c C-z)" lpy-nrepl-switch-to-repl]
+    ["Start nREPL Server" lpy-nrepl-start]
+    ["Connect to nREPL" lpy-nrepl-connect]
+    ["Disconnect nREPL" lpy-nrepl-disconnect]
+    "---"
+    ["Run File" lpy-shell-run-file]
+    ["Insert pdb (C-c C-t)" lpy-insert-pdb]))
 
 ;;; Provide:
 
