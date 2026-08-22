@@ -1,0 +1,120 @@
+#!/bin/sh
+#
+# post-checkout — provision shared gitignored files into a fresh worktree.
+#
+# ⚠️ CANONICAL BODY — DO NOT EDIT BELOW THE CONFIG BLOCK.
+# This file is copied verbatim from
+#   ~/vault/Vault/Projects/dotagents/guidelines/templates/post-checkout
+# and the ONLY per-project variance is LINK_FILES / COPY_FILES. Nine hand-written
+# copies had already drifted by 17-29 lines of logic — including two that lost the
+# broken-symlink source check and the SQL escaping below — which is why the body
+# is now one artifact. Fix a bug in the template, then re-copy.
+#
+# `git worktree add` runs a checkout in the new worktree, which fires this hook
+# with the new worktree as cwd. That is what populates files git does not track,
+# so a worktree is ready to build and run without manual copying.
+#
+#   - env/secret files and agent docs are SYMLINKED back to the main checkout:
+#     they stay in sync, and symlinking a secret never reads its contents.
+#     ⚠️ NEVER copy an env file — a copy drifts and duplicates the secret.
+#   - the SQLite db is COPIED as an independent snapshot, so a schema migration
+#     run inside the worktree can never corrupt the main checkout's database.
+#
+# Idempotent: only provisions files that are missing, so it is safe to re-run
+# and safe to fire on ordinary `git checkout` / `git switch`.
+#
+# Tracked in .githooks/ and activated per-clone (this pointer is local, not
+# committed):
+#   git config core.hooksPath .githooks
+# Run `git worktree add` from a checkout root so the relative path resolves.
+
+# ==== PROJECT CONFIG — the only part that varies ==========================
+
+# SYMLINK: files that should track the main checkout. Agent docs are themselves
+# symlinks into the vault; linking the link is fine and keeps one source.
+#
+# ⚠️ Keep this list NARROW. Never link node_modules, build output or a whole data
+# dir — those confuse build tools, watchers and cleanup. A large READ-ONLY data
+# dir is the one defensible exception (vocadict links its dictionary shards);
+# document it in that project's AGENTS.md.
+LINK_FILES="
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.env
+"
+
+# COPY: anything the worktree may mutate irreversibly — the dev/staging db above
+# all, so a migration tried in a worktree cannot reach the database the main
+# checkout serves. Empty is valid (a Supabase-backed project has no local db).
+COPY_FILES="
+"
+
+# ==== CANONICAL BODY — do not edit per project ============================
+
+# $3 is the checkout flag: 1 = branch checkout (incl. worktree add), 0 = file.
+# Only act on branch checkouts.
+[ "$3" = "1" ] || exit 0
+
+# Resolve this worktree's gitdir and the shared common gitdir.
+wt_gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || exit 0
+common_gitdir=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd) || exit 0
+
+# In the MAIN checkout these are equal — nothing to provision, bail out.
+[ "$wt_gitdir" = "$common_gitdir" ] && exit 0
+
+# Main checkout top-level is the parent of the common gitdir (<main>/.git).
+main_top=$(dirname "$common_gitdir")
+wt_top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+linked=""
+for rel in $LINK_FILES; do
+	src="$main_top/$rel"
+	dst="$wt_top/$rel"
+	# Skip if the source is missing or the destination already exists.
+	[ -e "$src" ] || [ -L "$src" ] || continue
+	{ [ -e "$dst" ] || [ -L "$dst" ]; } && continue
+	mkdir -p "$(dirname "$dst")"
+	ln -s "$src" "$dst" && linked="$linked $rel"
+done
+
+copied=""
+for rel in $COPY_FILES; do
+	src="$main_top/$rel"
+	dst="$wt_top/$rel"
+	[ -e "$src" ] || continue
+	{ [ -e "$dst" ] || [ -L "$dst" ]; } && continue
+	mkdir -p "$(dirname "$dst")"
+	case "$rel" in
+	*.db)
+		# WAL-mode dbs keep committed data in the -wal file until checkpoint,
+		# and a live `serve` process may be mid-write. VACUUM INTO writes a
+		# consistent standalone snapshot (WAL-committed data included) into a
+		# fresh file; fall back to cp if the sqlite3 CLI is unavailable. $dst is
+		# SQL-string-escaped so a worktree path with quotes/spaces stays safe.
+		# Safe because this branch only runs when $dst does not yet exist.
+		if command -v sqlite3 >/dev/null 2>&1; then
+			dst_sql=$(printf '%s' "$dst" | sed "s/'/''/g")
+			sqlite3 "$src" "VACUUM INTO '$dst_sql'" && copied="$copied $rel"
+		else
+			echo "post-checkout: sqlite3 missing; falling back to cp for $rel (may be inconsistent if db is being written)" >&2
+			cp -p "$src" "$dst" && copied="$copied $rel"
+		fi
+		;;
+	*)
+		cp -p "$src" "$dst" && copied="$copied $rel"
+		;;
+	esac
+done
+
+[ -n "$linked" ] && echo "post-checkout: linked shared files:$linked"
+[ -n "$copied" ] && echo "post-checkout: copied isolated files:$copied"
+
+# Optional per-project extension, so a genuine project-specific need never
+# becomes a reason to fork the body above. Runs with $wt_top / $main_top set and
+# provisioning already done — the place for a sanity check ON what was
+# provisioned (fridge warns when the copied db has zero rounds, which is
+# otherwise a silent empty-dev-db). Keep it to that; anything general belongs in
+# the template.
+[ -f "$wt_top/.githooks/post-checkout.project" ] && . "$wt_top/.githooks/post-checkout.project"
+exit 0
