@@ -283,3 +283,5 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,windows,python,emacs,visualstudiocode
+# Linked worktrees live here (git.md worktree workflow).
+.worktrees/
