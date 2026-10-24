@@ -260,12 +260,11 @@ Expected to be called within a Lpy interpreter process buffer."
   (lpy-shell--eval-1
     (lpy--last-sexp-string)))
 
-(defun lpy-shell-eval-region ()
-  "Send region to the Lpy interpreter, starting up if needed."
-  (interactive)
-  (when (and (region-active-p) (not (region-noncontiguous-p)))
-    (lpy-shell--eval-1
-      (buffer-substring (region-beginning) (region-end)))))
+(defun lpy-shell-eval-region (start end)
+  "Send the region between START and END to the Lpy interpreter.
+Starts the interpreter if needed."
+  (interactive "r")
+  (lpy-shell--eval-1 (buffer-substring start end)))
 
 (defun lpy-shell-eval-buffer ()
   "Send the current buffer to the Lpy interpreter, starting up if needed."

@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (add-to-list 'load-path
              (file-name-directory
               (directory-file-name
@@ -74,6 +75,75 @@
   (lpy-nrepl-test--with-project nil
     (should-not (lpy-nrepl--read-port-file
                  (expand-file-name ".nrepl-port" root)))))
+
+;;; Connection swapping
+
+(defun lpy-nrepl-test--server ()
+  "Start a local TCP server on a free port and return it."
+  (make-network-process :name "lpy-nrepl-test-server" :server t
+                        :service t :host "127.0.0.1" :family 'ipv4
+                        :noquery t))
+
+(defun lpy-nrepl-test--port (server)
+  "Return the port SERVER listens on."
+  (process-contact server :service))
+
+(defvar lpy-nrepl-test--messages nil
+  "Messages emitted while `lpy-nrepl-test--with-servers' runs, newest first.")
+
+(defmacro lpy-nrepl-test--with-servers (vars &rest body)
+  "Run BODY with VARS bound to local servers and `message' captured.
+The globals are let-bound; processes and buffers are cleaned up afterwards."
+  (declare (indent 1))
+  `(let ((lpy-nrepl--connection nil)
+         (lpy-nrepl--pending-callbacks nil)
+         (lpy-nrepl--response-buffer "")
+         (lpy-nrepl-test--messages nil)
+         ,@(mapcar (lambda (v) `(,v (lpy-nrepl-test--server))) vars))
+     (cl-letf (((symbol-function 'message)
+                (lambda (fmt &rest args)
+                  (push (apply #'format fmt args) lpy-nrepl-test--messages))))
+       (unwind-protect (progn ,@body)
+         (when lpy-nrepl--connection (delete-process lpy-nrepl--connection))
+         ,@(mapcar (lambda (v) `(delete-process ,v)) vars)
+         (accept-process-output nil 0.05)
+         (dolist (buf (buffer-list))
+           (when (string-match-p "\\`\\(\\*lpy-nrepl\\*\\| ?lpy-nrepl\\)"
+                                 (buffer-name buf))
+             (kill-buffer buf)))))))
+
+(ert-deftest lpy-nrepl-test-failed-connect-keeps-connection ()
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (let* ((orig lpy-nrepl--connection)
+           (callbacks '((1 . ignore)))
+           (dead (let ((tmp (lpy-nrepl-test--server)))
+                   (prog1 (lpy-nrepl-test--port tmp)
+                     (delete-process tmp)))))
+      (setq lpy-nrepl--pending-callbacks callbacks
+            lpy-nrepl--response-buffer "{\"id\"")
+      (should-error (lpy-nrepl-connect dead))
+      (accept-process-output nil 0.1)
+      (should (eq lpy-nrepl--connection orig))
+      (should (lpy-nrepl-connected-p))
+      (should (eq lpy-nrepl--pending-callbacks callbacks))
+      (should (equal lpy-nrepl--response-buffer "{\"id\"")))))
+
+(ert-deftest lpy-nrepl-test-reconnect-swaps-connection ()
+  (lpy-nrepl-test--with-servers (srv-a srv-b)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv-a))
+    (let ((a lpy-nrepl--connection))
+      (setq lpy-nrepl-test--messages nil)
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv-b))
+      (let ((b lpy-nrepl--connection))
+        (should-not (eq a b))
+        (should (process-live-p b))
+        (should-not (process-live-p a))
+        (dotimes (_ 3) (accept-process-output nil 0.1))
+        (should (eq lpy-nrepl--connection b))
+        (should (lpy-nrepl-connected-p))
+        (should-not (cl-some (lambda (m) (string-match-p "disconnected" m))
+                             lpy-nrepl-test--messages))))))
 
 (provide 'lpy-nrepl-test)
 

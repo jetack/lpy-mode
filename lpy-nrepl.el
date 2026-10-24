@@ -31,6 +31,12 @@
 (require 'lpy-base)
 (require 'json)
 
+(declare-function run-lpy "lpy-shell" ())
+(declare-function lpy-shell-eval-current-form "lpy-shell" ())
+(declare-function lpy-shell-eval-last-sexp "lpy-shell" ())
+(declare-function lpy-shell-eval-region "lpy-shell" (start end))
+(declare-function lpy-shell-eval-buffer "lpy-shell" ())
+
 ;;; Configuration
 
 (defvar lpy-nrepl--host "127.0.0.1"
@@ -127,13 +133,16 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
           (error
            (message "lpy-nrepl: failed to parse response: %s" (error-message-string err))))))))
 
-(defun lpy-nrepl--process-sentinel (_proc event)
-  "Handle connection state changes."
+(defun lpy-nrepl--process-sentinel (proc event)
+  "Handle connection state changes of PROC.
+Only the current connection may clear state: a replaced process still
+reports its own deletion, which must not drop its successor."
   (let ((event-trimmed (string-trim event)))
     (cond
      ((string-match-p "^open" event-trimmed)
       (message "lpy-nrepl: connected"))
-     ((string-match-p "\\(deleted\\|connection broken\\|failed\\)" event-trimmed)
+     ((and (eq proc lpy-nrepl--connection)
+           (string-match-p "\\(deleted\\|connection broken\\|failed\\)" event-trimmed))
       (message "lpy-nrepl: disconnected (%s)" event-trimmed)
       (setq lpy-nrepl--connection nil)))))
 
@@ -199,26 +208,41 @@ DIR defaults to `default-directory'."
         (read-number "Port: " found)
       (read-number "Port: "))))
 
+(defun lpy-nrepl--swap-connection (new)
+  "Make NEW (a process or nil) the connection and delete the previous one.
+Pending callbacks belong to the old connection and are dropped.  NEW is
+installed before the old process is deleted: `delete-process' runs its
+sentinel synchronously, and the sentinel only clears state for the current
+connection, so it must no longer see the old process as current."
+  (let ((old lpy-nrepl--connection))
+    (setq lpy-nrepl--connection new)
+    (setq lpy-nrepl--pending-callbacks nil)
+    (when old
+      (delete-process old))))
+
 ;;;###autoload
 (defun lpy-nrepl-connect (port)
   "Connect to an nREPL server on 127.0.0.1:PORT.
 Interactively, the port defaults to the one in the nearest `.nrepl-port'."
   (interactive (list (lpy-nrepl--read-port)))
-  (when (lpy-nrepl-connected-p)
-    (lpy-nrepl-disconnect))
-  (setq lpy-nrepl--response-buffer "")
-  (setq lpy-nrepl--pending-callbacks nil)
-  (setq lpy-nrepl--connection
-        (make-network-process
-         :name "lpy-nrepl"
-         :host lpy-nrepl--host
-         :service port
-         :family 'ipv4
-         :nowait nil
-         :filter #'lpy-nrepl--process-filter
-         :sentinel #'lpy-nrepl--process-sentinel
-         :coding 'utf-8))
-  (set-process-query-on-exit-flag lpy-nrepl--connection nil)
+  ;; Open first, swap after: a stale port (e.g. from `.nrepl-port') must not
+  ;; drop a live connection.  The connect is synchronous (:nowait nil) and
+  ;; signals on failure, leaving the old connection, callbacks and response
+  ;; buffer untouched.  Being synchronous, two connects cannot overlap, so
+  ;; there is no pending connection to cancel.  The old process is deleted
+  ;; only after the new one is installed (see `lpy-nrepl--swap-connection').
+  (let ((new (make-network-process
+              :name "lpy-nrepl"
+              :host lpy-nrepl--host
+              :service port
+              :family 'ipv4
+              :nowait nil
+              :filter #'lpy-nrepl--process-filter
+              :sentinel #'lpy-nrepl--process-sentinel
+              :coding 'utf-8)))
+    (setq lpy-nrepl--response-buffer "")
+    (set-process-query-on-exit-flag new nil)
+    (lpy-nrepl--swap-connection new))
   (display-buffer (lpy-nrepl--repl-buffer)
                   '(display-buffer-at-bottom . ((window-height . 0.3))))
   (message "lpy-nrepl: connected to %s:%d" lpy-nrepl--host port))
@@ -238,9 +262,7 @@ Interactively, the port defaults to the one in the nearest `.nrepl-port'."
   "Close the nREPL connection."
   (interactive)
   (when lpy-nrepl--connection
-    (delete-process lpy-nrepl--connection)
-    (setq lpy-nrepl--connection nil)
-    (setq lpy-nrepl--pending-callbacks nil)
+    (lpy-nrepl--swap-connection nil)
     (message "lpy-nrepl: disconnected")))
 
 ;;;###autoload
