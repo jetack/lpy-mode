@@ -39,6 +39,10 @@
 (defvar lpy-nrepl--default-port nil
   "Default port for `lpy-nrepl-connect'.  When nil, prompt interactively.")
 
+(defconst lpy-nrepl--port-file ".nrepl-port"
+  "Name of the file `lpy --nrepl' writes its port to.
+The file holds the decimal port and sits in the server's working directory.")
+
 (defvar lpy-nrepl--overlay-duration 5
   "Seconds to display result overlays before they fade.")
 
@@ -168,10 +172,38 @@ If CALLBACK is non-nil, register it to be called with the response."
   (and lpy-nrepl--connection
        (process-live-p lpy-nrepl--connection)))
 
+(defun lpy-nrepl--read-port-file (file)
+  "Return the port number stored in port FILE, or nil when it is unusable."
+  (when (file-readable-p file)
+    (let ((text (string-trim
+                 (with-temp-buffer
+                   (insert-file-contents file nil 0 32)
+                   (buffer-string)))))
+      (when (string-match-p "\\`[0-9]+\\'" text)
+        (let ((port (string-to-number text)))
+          (and (<= 1 port 65535) port))))))
+
+(defun lpy-nrepl--discover-port (&optional dir)
+  "Return the port named by the nearest `.nrepl-port' above DIR, or nil.
+DIR defaults to `default-directory'."
+  (let ((root (locate-dominating-file (or dir default-directory)
+                                      lpy-nrepl--port-file)))
+    (and root
+         (lpy-nrepl--read-port-file
+          (expand-file-name lpy-nrepl--port-file root)))))
+
+(defun lpy-nrepl--read-port ()
+  "Read a port from the minibuffer, defaulting to the discovered one."
+  (let ((found (or (lpy-nrepl--discover-port) lpy-nrepl--default-port)))
+    (if found
+        (read-number "Port: " found)
+      (read-number "Port: "))))
+
 ;;;###autoload
 (defun lpy-nrepl-connect (port)
-  "Connect to an nREPL server on 127.0.0.1:PORT."
-  (interactive "nPort: ")
+  "Connect to an nREPL server on 127.0.0.1:PORT.
+Interactively, the port defaults to the one in the nearest `.nrepl-port'."
+  (interactive (list (lpy-nrepl--read-port)))
   (when (lpy-nrepl-connected-p)
     (lpy-nrepl-disconnect))
   (setq lpy-nrepl--response-buffer "")
@@ -190,6 +222,16 @@ If CALLBACK is non-nil, register it to be called with the response."
   (display-buffer (lpy-nrepl--repl-buffer)
                   '(display-buffer-at-bottom . ((window-height . 0.3))))
   (message "lpy-nrepl: connected to %s:%d" lpy-nrepl--host port))
+
+;;;###autoload
+(defun lpy-nrepl-connect-project ()
+  "Connect using the `.nrepl-port' file in the project root."
+  (interactive)
+  (let ((port (lpy-nrepl--discover-port)))
+    (unless port
+      (user-error "No usable %s found above %s"
+                  lpy-nrepl--port-file default-directory))
+    (lpy-nrepl-connect port)))
 
 ;;;###autoload
 (defun lpy-nrepl-disconnect ()
@@ -390,15 +432,41 @@ The expansion is displayed in a `*lpy-macroexpand*' buffer."
     "Stub for backward compatibility. Use `lpy-nrepl-completion-at-point' instead."
     nil))
 
+(defconst lpy-nrepl--kind-annotations
+  '(("class" . " class")
+    ("function" . " fn")
+    ("variable" . " var")
+    ("macro" . " macro")
+    ("keyword" . " kw"))
+  "Annotation text for each completion kind the nREPL `complete' op returns.")
+
+(defconst lpy-nrepl--company-kinds
+  '(("class" . class)
+    ("function" . function)
+    ("variable" . variable)
+    ("macro" . function)
+    ("keyword" . keyword))
+  "Company kind symbol for each nREPL completion kind.")
+
+(defun lpy-nrepl--kind-annotation (kind)
+  "Return the annotation string for completion KIND, or nil when unknown."
+  (cdr (assoc kind lpy-nrepl--kind-annotations)))
+
+(defun lpy-nrepl--kinds-lookup (kinds candidate)
+  "Return the kind of CANDIDATE in KINDS, the alist from a complete response."
+  (alist-get (intern candidate) kinds))
+
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
-Works with corfu, company-capf, and default completion."
+Works with corfu, company-capf, and default completion.  Candidates are
+annotated with the kind the server reports for them."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
            (start (save-excursion
                     (skip-chars-backward "a-zA-Z0-9_\\-.*")
                     (point)))
-           (prefix (buffer-substring-no-properties start end)))
+           (prefix (buffer-substring-no-properties start end))
+           (kinds nil))
       (when (> (length prefix) 0)
         (list start end
               (completion-table-dynamic
@@ -409,11 +477,20 @@ Works with corfu, company-capf, and default completion."
                     `((op . "complete") (prefix . ,prefix))
                     (lambda (response)
                       (setq result (append (alist-get 'completions response) nil))
+                      (setq kinds (alist-get 'kinds response))
                       (setq done t)))
                    (with-timeout (1 nil)
                      (while (not done)
                        (accept-process-output lpy-nrepl--connection 0.05)))
                    result)))
+              :annotation-function
+              (lambda (candidate)
+                (lpy-nrepl--kind-annotation
+                 (lpy-nrepl--kinds-lookup kinds candidate)))
+              :company-kind
+              (lambda (candidate)
+                (cdr (assoc (lpy-nrepl--kinds-lookup kinds candidate)
+                            lpy-nrepl--company-kinds)))
               :exclusive 'no)))))
 
 ;;; Eldoc (nREPL-backed)
