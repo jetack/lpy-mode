@@ -15,7 +15,8 @@ An Emacs major mode for [LisPython](https://github.com/jetack/lispython).
   - `C-c C-k` load file into REPL
   - `C-c C-m` macroexpand form
   - `C-c C-z` start nREPL server / show REPL buffer
-  - Completion via `completion-at-point` (works with corfu, company, default)
+  - `M-x lpy-nrepl-connect-project` connect via the project's `.nrepl-port` (also the default port for `lpy-nrepl-connect`)
+  - Completion via `completion-at-point` (works with corfu, company, default), annotated with the server's kind (class/fn/var/macro/kw)
   - Eldoc integration (signature display in minibuffer)
 - Comint shell fallback when nREPL is not connected
 
