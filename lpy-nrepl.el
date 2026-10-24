@@ -31,6 +31,12 @@
 (require 'lpy-base)
 (require 'json)
 
+(declare-function run-lpy "lpy-shell" ())
+(declare-function lpy-shell-eval-current-form "lpy-shell" ())
+(declare-function lpy-shell-eval-last-sexp "lpy-shell" ())
+(declare-function lpy-shell-eval-region "lpy-shell" ())
+(declare-function lpy-shell-eval-buffer "lpy-shell" ())
+
 ;;; Configuration
 
 (defvar lpy-nrepl--host "127.0.0.1"
@@ -548,7 +554,8 @@ Calls CALLBACK with the docs string when available."
   (interactive "r")
   (if (lpy-nrepl-connected-p)
       (lpy-nrepl-eval-region start end)
-    (lpy-shell-eval-region start end)))
+    ;; `lpy-shell-eval-region' takes no arguments; it reads the active region.
+    (lpy-shell-eval-region)))
 
 ;;;###autoload
 (defun lpy-nrepl-eval-buffer-or-shell ()
