@@ -9,6 +9,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'cl-lib)
 (add-to-list 'load-path
              (file-name-directory
               (directory-file-name
@@ -74,6 +75,59 @@
   (lpy-nrepl-test--with-project nil
     (should-not (lpy-nrepl--read-port-file
                  (expand-file-name ".nrepl-port" root)))))
+
+;;; Connection swapping
+
+(defun lpy-nrepl-test--server ()
+  "Start a local TCP server on a free port and return it."
+  (make-network-process :name "lpy-nrepl-test-server" :server t
+                        :service t :host "127.0.0.1" :family 'ipv4
+                        :noquery t))
+
+(defun lpy-nrepl-test--port (server)
+  "Return the port SERVER listens on."
+  (process-contact server :service))
+
+(defmacro lpy-nrepl-test--with-servers (vars &rest body)
+  "Run BODY with VARS bound to local servers and clean globals afterwards."
+  (declare (indent 1))
+  `(let ((lpy-nrepl--connection nil)
+         (lpy-nrepl--pending-callbacks nil)
+         (lpy-nrepl--response-buffer "")
+         ,@(mapcar (lambda (v) `(,v (lpy-nrepl-test--server))) vars))
+     (unwind-protect (progn ,@body)
+       (when lpy-nrepl--connection (delete-process lpy-nrepl--connection))
+       ,@(mapcar (lambda (v) `(delete-process ,v)) vars)
+       (accept-process-output nil 0.05))))
+
+(ert-deftest lpy-nrepl-test-failed-connect-keeps-connection ()
+  (lpy-nrepl-test--with-servers (srv)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+      (let* ((orig lpy-nrepl--connection)
+             (dead (let ((tmp (lpy-nrepl-test--server)))
+                     (prog1 (lpy-nrepl-test--port tmp)
+                       (delete-process tmp)))))
+        (setq lpy-nrepl--pending-callbacks '((1 . ignore)))
+        (should-error (lpy-nrepl-connect dead))
+        (accept-process-output nil 0.1)
+        (should (eq lpy-nrepl--connection orig))
+        (should (lpy-nrepl-connected-p))
+        (should (equal lpy-nrepl--pending-callbacks '((1 . ignore))))))))
+
+(ert-deftest lpy-nrepl-test-reconnect-swaps-connection ()
+  (lpy-nrepl-test--with-servers (srv-a srv-b)
+    (cl-letf (((symbol-function 'message) #'ignore))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv-a))
+      (let ((a lpy-nrepl--connection))
+        (lpy-nrepl-connect (lpy-nrepl-test--port srv-b))
+        (let ((b lpy-nrepl--connection))
+          (should-not (eq a b))
+          (dotimes (_ 3) (accept-process-output nil 0.1))
+          (should (eq lpy-nrepl--connection b))
+          (should (process-live-p b))
+          (should (lpy-nrepl-connected-p))
+          (should-not (process-live-p a)))))))
 
 (provide 'lpy-nrepl-test)
 
