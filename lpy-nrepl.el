@@ -444,7 +444,7 @@ The expansion is displayed in a `*lpy-macroexpand*' buffer."
   '(("class" . class)
     ("function" . function)
     ("variable" . variable)
-    ("macro" . macro)
+    ("macro" . function)
     ("keyword" . keyword))
   "Company kind symbol for each nREPL completion kind.")
 
