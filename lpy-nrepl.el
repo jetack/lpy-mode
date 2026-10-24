@@ -208,12 +208,17 @@ DIR defaults to `default-directory'."
         (read-number "Port: " found)
       (read-number "Port: "))))
 
-(defun lpy-nrepl--drop-connection ()
-  "Delete the current connection process and forget its pending callbacks."
-  (when lpy-nrepl--connection
-    (delete-process lpy-nrepl--connection)
-    (setq lpy-nrepl--connection nil)
-    (setq lpy-nrepl--pending-callbacks nil)))
+(defun lpy-nrepl--swap-connection (new)
+  "Make NEW (a process or nil) the connection and delete the previous one.
+Pending callbacks belong to the old connection and are dropped.  NEW is
+installed before the old process is deleted: `delete-process' runs its
+sentinel synchronously, and the sentinel only clears state for the current
+connection, so it must no longer see the old process as current."
+  (let ((old lpy-nrepl--connection))
+    (setq lpy-nrepl--connection new)
+    (setq lpy-nrepl--pending-callbacks nil)
+    (when old
+      (delete-process old))))
 
 ;;;###autoload
 (defun lpy-nrepl-connect (port)
@@ -224,7 +229,8 @@ Interactively, the port defaults to the one in the nearest `.nrepl-port'."
   ;; drop a live connection.  The connect is synchronous (:nowait nil) and
   ;; signals on failure, leaving the old connection, callbacks and response
   ;; buffer untouched.  Being synchronous, two connects cannot overlap, so
-  ;; there is no pending connection to cancel.
+  ;; there is no pending connection to cancel.  The old process is deleted
+  ;; only after the new one is installed (see `lpy-nrepl--swap-connection').
   (let ((new (make-network-process
               :name "lpy-nrepl"
               :host lpy-nrepl--host
@@ -234,11 +240,9 @@ Interactively, the port defaults to the one in the nearest `.nrepl-port'."
               :filter #'lpy-nrepl--process-filter
               :sentinel #'lpy-nrepl--process-sentinel
               :coding 'utf-8)))
-    (lpy-nrepl--drop-connection)
-    (setq lpy-nrepl--connection new)
     (setq lpy-nrepl--response-buffer "")
-    (setq lpy-nrepl--pending-callbacks nil)
-    (set-process-query-on-exit-flag new nil))
+    (set-process-query-on-exit-flag new nil)
+    (lpy-nrepl--swap-connection new))
   (display-buffer (lpy-nrepl--repl-buffer)
                   '(display-buffer-at-bottom . ((window-height . 0.3))))
   (message "lpy-nrepl: connected to %s:%d" lpy-nrepl--host port))
@@ -258,7 +262,7 @@ Interactively, the port defaults to the one in the nearest `.nrepl-port'."
   "Close the nREPL connection."
   (interactive)
   (when lpy-nrepl--connection
-    (lpy-nrepl--drop-connection)
+    (lpy-nrepl--swap-connection nil)
     (message "lpy-nrepl: disconnected")))
 
 ;;;###autoload
