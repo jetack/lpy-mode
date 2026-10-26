@@ -1,10 +1,13 @@
 ;;; lpy-nrepl-test.el --- nREPL client tests -*- lexical-binding: t -*-
 
-;; ERT tests for the pure parts of `lpy-nrepl': completion kind annotations
-;; and `.nrepl-port' discovery.  Run with:
+;; ERT tests for `lpy-nrepl': completion kind annotations, `.nrepl-port'
+;; discovery, connection swapping and REPL log scrolling.  Run with:
 ;;   B=~/.emacs.d/straight/build
 ;;   emacs -Q --batch -L . -L $B/dash -L $B/s -L $B/f \
+;;     --eval '(setq load-prefer-newer t)' \
 ;;     -l test/lpy-nrepl-test.el -f ert-run-tests-batch-and-exit
+;; load-prefer-newer matters: a stale (gitignored) lpy-nrepl.elc beside the
+;; source is otherwise loaded instead, and the tests silently run old code.
 
 ;;; Code:
 
@@ -144,6 +147,135 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
         (should (lpy-nrepl-connected-p))
         (should-not (cl-some (lambda (m) (string-match-p "disconnected" m))
                              lpy-nrepl-test--messages))))))
+
+;; Shared setup for the REPL-log scroll tests.  Binds REPL to an isolated
+;; log buffer prefilled with 100 lines, SRC to a source buffer shown in the
+;; selected window, and WIN to a non-selected window showing REPL.
+;; EVAL-INPUT runs the real eval path for "(+ 1 2)"; EVAL-RESPONSE feeds the
+;; matching "3" response through the process filter.
+;; Callers assert window-point, not window-end: batch Emacs never
+;; redisplays, so window-start stays put and (window-end W t) reports
+;; point-max either way.
+(defmacro lpy-nrepl-test--with-repl-window (&rest body)
+  (declare (indent 0) (debug t))
+  `(let* ((lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-scroll*")
+          (lpy-nrepl--connection nil)
+          (lpy-nrepl--pending-callbacks nil)
+          (lpy-nrepl--response-buffer "")
+          (lpy-nrepl--request-counter 0)
+          (sent nil)
+          (src (generate-new-buffer " *lpy-nrepl-test-src*"))
+          (repl (get-buffer-create lpy-nrepl--repl-buffer-name)))
+     (unwind-protect
+         (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+                   ((symbol-function 'process-send-string)
+                    (lambda (_proc str) (push str sent)))
+                   ((symbol-function 'message) #'ignore))
+           (with-current-buffer repl
+             (lpy-nrepl-repl-mode)
+             (let ((inhibit-read-only t))
+               (dotimes (i 100) (insert (format "line %d\n" i)))))
+           (save-window-excursion
+             (let* ((sel (selected-window))
+                    (win (split-window sel))
+                    (repl-end (lambda () (with-current-buffer repl (point-max))))
+                    (eval-input
+                     (lambda ()
+                       (with-current-buffer src
+                         (lpy-nrepl--eval-code "(+ 1 2)"))))
+                    (eval-response
+                     (lambda ()
+                       (let ((id (alist-get 'id (json-parse-string
+                                                 (car sent) :object-type 'alist))))
+                         (lpy-nrepl--process-filter
+                          nil (format "{\"id\":\"%s\",\"value\":\"3\"}\n" id))))))
+               (ignore repl-end eval-input eval-response)
+               (set-window-buffer sel src)
+               (set-window-buffer win repl)
+               (with-current-buffer src (insert "(+ 1 2)"))
+               ,@body)))
+       (kill-buffer src)
+       (kill-buffer repl))))
+
+(ert-deftest lpy-nrepl-test-log-follows-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (set-window-point win (funcall repl-end))
+    (funcall eval-input)
+    ;; "input" path.
+    (should (= (window-point win) (funcall repl-end)))
+    (funcall eval-response)
+    ;; "value" path.
+    (should (= (window-point win) (funcall repl-end)))
+    (should-not (eq win (selected-window)))
+    (with-current-buffer repl
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
+(ert-deftest lpy-nrepl-test-log-scrolled-up-stays ()
+  (lpy-nrepl-test--with-repl-window
+    (set-window-point win 50)
+    (funcall eval-input)
+    (should (= (window-point win) 50))
+    (funcall eval-response)
+    (should (= (window-point win) 50))
+    (should-not (eq win (selected-window)))
+    (with-current-buffer repl
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
+(ert-deftest lpy-nrepl-test-log-follows-again-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (set-window-point win 50)
+    (funcall eval-input)
+    (funcall eval-response)
+    (should (= (window-point win) 50))
+    (set-window-point win (funcall repl-end))
+    (funcall eval-input)
+    (should (= (window-point win) (funcall repl-end)))
+    (funcall eval-response)
+    (should (= (window-point win) (funcall repl-end)))))
+
+;; In the selected window, window-point is the buffer's own point.
+(ert-deftest lpy-nrepl-test-log-selected-window-scrolled-up-stays ()
+  (lpy-nrepl-test--with-repl-window
+    (select-window win)
+    (with-current-buffer repl (goto-char 50))
+    (funcall eval-input)
+    (funcall eval-response)
+    (should (eq win (selected-window)))
+    (should (= (window-point win) 50))
+    (with-current-buffer repl
+      (should (= (point) 50))
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
+(ert-deftest lpy-nrepl-test-log-selected-window-follows-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (select-window win)
+    (with-current-buffer repl (goto-char (point-max)))
+    (funcall eval-input)
+    (should (eq win (selected-window)))
+    (should (= (window-point win) (funcall repl-end)))
+    (with-current-buffer repl
+      (should (= (point) (point-max))))
+    (funcall eval-response)
+    (should (= (window-point win) (funcall repl-end)))
+    (with-current-buffer repl
+      (should (= (point) (point-max)))
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
+;; With no window showing the log, buffer point is what a later C-c C-z
+;; (display-buffer) shows, so a buffer at its end must keep following.
+(ert-deftest lpy-nrepl-test-log-undisplayed-follows-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (set-window-buffer win src)
+    (should-not (get-buffer-window-list repl nil t))
+    (with-current-buffer repl (goto-char (point-max)))
+    (funcall eval-input)
+    (with-current-buffer repl
+      (should (= (point) (point-max))))
+    (funcall eval-response)
+    (should-not (get-buffer-window-list repl nil t))
+    (with-current-buffer repl
+      (should (= (point) (point-max)))
+      (should (string-suffix-p "3\n" (buffer-string))))))
 
 (provide 'lpy-nrepl-test)
 
