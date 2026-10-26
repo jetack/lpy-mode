@@ -103,8 +103,10 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
   (with-current-buffer (lpy-nrepl--repl-buffer)
     ;; Window points are per-window markers and with-current-buffer moves
     ;; only buffer point.  Like comint, follow new output only in windows
-    ;; (and buffer point) already at the end: a user reading earlier output
-    ;; keeps their place, and follows again once back at the end.
+    ;; already at the end: a user reading earlier output keeps their place,
+    ;; and follows again once back at the end.  Buffer point matters when
+    ;; no window shows the log (it is what C-c C-z will display), so a
+    ;; buffer at its end keeps following too.
     (let* ((inhibit-read-only t)
            (old-end (point-max))
            (point-at-end (= (point) old-end))

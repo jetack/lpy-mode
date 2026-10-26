@@ -261,6 +261,22 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
       (should (= (point) (point-max)))
       (should (string-suffix-p "3\n" (buffer-string))))))
 
+;; With no window showing the log, buffer point is what a later C-c C-z
+;; (display-buffer) shows, so a buffer at its end must keep following.
+(ert-deftest lpy-nrepl-test-log-undisplayed-follows-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (set-window-buffer win src)
+    (should-not (get-buffer-window-list repl nil t))
+    (with-current-buffer repl (goto-char (point-max)))
+    (funcall eval-input)
+    (with-current-buffer repl
+      (should (= (point) (point-max))))
+    (funcall eval-response)
+    (should-not (get-buffer-window-list repl nil t))
+    (with-current-buffer repl
+      (should (= (point) (point-max)))
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
