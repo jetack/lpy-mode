@@ -246,6 +246,21 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
       (should (= (point) 50))
       (should (string-suffix-p "3\n" (buffer-string))))))
 
+(ert-deftest lpy-nrepl-test-log-selected-window-follows-at-end ()
+  (lpy-nrepl-test--with-repl-window
+    (select-window win)
+    (with-current-buffer repl (goto-char (point-max)))
+    (funcall eval-input)
+    (should (eq win (selected-window)))
+    (should (= (window-point win) (funcall repl-end)))
+    (with-current-buffer repl
+      (should (= (point) (point-max))))
+    (funcall eval-response)
+    (should (= (window-point win) (funcall repl-end)))
+    (with-current-buffer repl
+      (should (= (point) (point-max)))
+      (should (string-suffix-p "3\n" (buffer-string))))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
