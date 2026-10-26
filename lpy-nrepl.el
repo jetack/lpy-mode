@@ -101,22 +101,34 @@ Each callback is a function taking one argument: the parsed JSON response.")
   "Append TEXT to the nREPL REPL buffer in CIDER-like format.
 DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
   (with-current-buffer (lpy-nrepl--repl-buffer)
-    (goto-char (point-max))
-    (let ((inhibit-read-only t))
-      (pcase direction
-        ("input"
-         (insert (propertize "repl> " 'face 'font-lock-keyword-face 'read-only t)
-                 (propertize (concat text "\n") 'face 'font-lock-string-face 'read-only t)))
-        ("value"
-         (insert (propertize (concat text "\n") 'face 'font-lock-constant-face 'read-only t)))
-        ("stdout"
-         (insert (propertize (concat text "\n") 'read-only t)))
-        ("error"
-         (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
-        (_
-         (insert (propertize (concat text "\n") 'read-only t))))
-      ;; Window points are per-window; with-current-buffer moves only buffer point.
+    ;; Window points are per-window markers and with-current-buffer moves
+    ;; only buffer point.  Like comint, follow new output only in windows
+    ;; (and buffer point) already at the end: a user reading earlier output
+    ;; keeps their place, and follows again once back at the end.
+    (let* ((inhibit-read-only t)
+           (old-end (point-max))
+           (point-at-end (= (point) old-end))
+           (following nil))
       (dolist (win (get-buffer-window-list (current-buffer) nil t))
+        (when (= (window-point win) old-end)
+          (push win following)))
+      (save-excursion
+        (goto-char (point-max))
+        (pcase direction
+          ("input"
+           (insert (propertize "repl> " 'face 'font-lock-keyword-face 'read-only t)
+                   (propertize (concat text "\n") 'face 'font-lock-string-face 'read-only t)))
+          ("value"
+           (insert (propertize (concat text "\n") 'face 'font-lock-constant-face 'read-only t)))
+          ("stdout"
+           (insert (propertize (concat text "\n") 'read-only t)))
+          ("error"
+           (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
+          (_
+           (insert (propertize (concat text "\n") 'read-only t)))))
+      (when point-at-end
+        (goto-char (point-max)))
+      (dolist (win following)
         (set-window-point win (point-max))))))
 
 ;;; TCP Communication
