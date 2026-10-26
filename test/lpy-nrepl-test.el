@@ -1,10 +1,13 @@
 ;;; lpy-nrepl-test.el --- nREPL client tests -*- lexical-binding: t -*-
 
-;; ERT tests for the pure parts of `lpy-nrepl': completion kind annotations
-;; and `.nrepl-port' discovery.  Run with:
+;; ERT tests for `lpy-nrepl': completion kind annotations, `.nrepl-port'
+;; discovery, connection swapping and REPL log scrolling.  Run with:
 ;;   B=~/.emacs.d/straight/build
 ;;   emacs -Q --batch -L . -L $B/dash -L $B/s -L $B/f \
+;;     --eval '(setq load-prefer-newer t)' \
 ;;     -l test/lpy-nrepl-test.el -f ert-run-tests-batch-and-exit
+;; load-prefer-newer matters: a stale (gitignored) lpy-nrepl.elc beside the
+;; source is otherwise loaded instead, and the tests silently run old code.
 
 ;;; Code:
 
