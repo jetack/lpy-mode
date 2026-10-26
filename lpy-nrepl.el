@@ -114,7 +114,10 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
         ("error"
          (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
         (_
-         (insert (propertize (concat text "\n") 'read-only t)))))))
+         (insert (propertize (concat text "\n") 'read-only t))))
+      ;; Window points are per-window; with-current-buffer moves only buffer point.
+      (dolist (win (get-buffer-window-list (current-buffer) nil t))
+        (set-window-point win (point-max))))))
 
 ;;; TCP Communication
 

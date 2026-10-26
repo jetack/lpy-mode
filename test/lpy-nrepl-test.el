@@ -145,6 +145,50 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
         (should-not (cl-some (lambda (m) (string-match-p "disconnected" m))
                              lpy-nrepl-test--messages))))))
 
+(ert-deftest lpy-nrepl-test-log-follows-in-unselected-window ()
+  (let* ((lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-scroll*")
+         (lpy-nrepl--connection nil)
+         (lpy-nrepl--pending-callbacks nil)
+         (lpy-nrepl--response-buffer "")
+         (lpy-nrepl--request-counter 0)
+         (sent nil)
+         (src (generate-new-buffer " *lpy-nrepl-test-src*"))
+         (repl (get-buffer-create lpy-nrepl--repl-buffer-name)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+                  ((symbol-function 'process-send-string)
+                   (lambda (_proc str) (push str sent)))
+                  ((symbol-function 'message) #'ignore))
+          (with-current-buffer repl
+            (lpy-nrepl-repl-mode)
+            (let ((inhibit-read-only t))
+              (dotimes (i 100) (insert (format "line %d\n" i)))))
+          (save-window-excursion
+            (let* ((sel (selected-window))
+                   (win (split-window sel)))
+              (set-window-buffer sel src)
+              (set-window-buffer win repl)
+              (set-window-point win 1)
+              (with-current-buffer src
+                (insert "(+ 1 2)")
+                (lpy-nrepl--eval-code "(+ 1 2)"))
+              ;; "input" path.
+              (should (= (window-point win)
+                         (with-current-buffer repl (point-max))))
+              (set-window-point win 1)
+              (let ((id (alist-get 'id (json-parse-string
+                                        (car sent) :object-type 'alist))))
+                (lpy-nrepl--process-filter
+                 nil (format "{\"id\":\"%s\",\"value\":\"3\"}\n" id)))
+              ;; "value" path.
+              (should (= (window-point win)
+                         (with-current-buffer repl (point-max))))
+              (should-not (eq win (selected-window)))
+              (with-current-buffer repl
+                (should (string-suffix-p "3\n" (buffer-string)))))))
+      (kill-buffer src)
+      (kill-buffer repl))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
