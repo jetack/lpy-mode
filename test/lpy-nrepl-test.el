@@ -145,6 +145,8 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
         (should-not (cl-some (lambda (m) (string-match-p "disconnected" m))
                              lpy-nrepl-test--messages))))))
 
+;; Asserts window-point, not window-end: batch Emacs never redisplays, so
+;; window-start stays put and (window-end W t) reports point-max either way.
 (ert-deftest lpy-nrepl-test-log-follows-in-unselected-window ()
   (let* ((lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-scroll*")
          (lpy-nrepl--connection nil)
