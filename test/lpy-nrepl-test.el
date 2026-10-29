@@ -94,11 +94,18 @@
 (defvar lpy-nrepl-test--messages nil
   "Messages emitted while `lpy-nrepl-test--with-servers' runs, newest first.")
 
+(defconst lpy-nrepl-test--servers-buffer-name " *lpy-nrepl-test-servers*"
+  "REPL log buffer name used instead of the live \"*lpy-nrepl*\".
+Connecting writes to the log buffer and cleanup kills it; under M-x ert in
+a live Emacs the real buffer holds the user's REPL history.")
+
 (defmacro lpy-nrepl-test--with-servers (vars &rest body)
   "Run BODY with VARS bound to local servers and `message' captured.
-The globals are let-bound; processes and buffers are cleaned up afterwards."
+The globals and the REPL log buffer name are let-bound; processes and the
+test log buffer are cleaned up afterwards."
   (declare (indent 1))
-  `(let ((lpy-nrepl--connection nil)
+  `(let ((lpy-nrepl--repl-buffer-name lpy-nrepl-test--servers-buffer-name)
+         (lpy-nrepl--connection nil)
          (lpy-nrepl--pending-callbacks nil)
          (lpy-nrepl--response-buffer "")
          (lpy-nrepl-test--messages nil)
@@ -110,10 +117,27 @@ The globals are let-bound; processes and buffers are cleaned up afterwards."
          (when lpy-nrepl--connection (delete-process lpy-nrepl--connection))
          ,@(mapcar (lambda (v) `(delete-process ,v)) vars)
          (accept-process-output nil 0.05)
-         (dolist (buf (buffer-list))
-           (when (string-match-p "\\`\\(\\*lpy-nrepl\\*\\| ?lpy-nrepl\\)"
-                                 (buffer-name buf))
-             (kill-buffer buf)))))))
+         (when (get-buffer lpy-nrepl-test--servers-buffer-name)
+           (kill-buffer lpy-nrepl-test--servers-buffer-name))))))
+
+(ert-deftest lpy-nrepl-test-with-servers-spares-live-repl-buffer ()
+  ;; Never writes to a pre-existing real buffer: only compares it before and
+  ;; after.  Batch has none, so the test creates (and removes) a stand-in.
+  (let* ((created (not (get-buffer "*lpy-nrepl*")))
+         (live (get-buffer-create "*lpy-nrepl*"))
+         (before (progn
+                   (when created
+                     (with-current-buffer live (insert "user history")))
+                   (with-current-buffer live (buffer-string)))))
+    (unwind-protect
+        (progn
+          (lpy-nrepl-test--with-servers (srv)
+            (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+            (should (get-buffer lpy-nrepl-test--servers-buffer-name)))
+          (should-not (get-buffer lpy-nrepl-test--servers-buffer-name))
+          (should (buffer-live-p live))
+          (should (equal (with-current-buffer live (buffer-string)) before)))
+      (when (and created (buffer-live-p live)) (kill-buffer live)))))
 
 (ert-deftest lpy-nrepl-test-failed-connect-keeps-connection ()
   (lpy-nrepl-test--with-servers (srv)
