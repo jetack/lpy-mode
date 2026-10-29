@@ -567,6 +567,13 @@ c]+-])" :indented))
       (lpy-nrepl-eval-buffer-contents)
       (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 1)))
 
+    (it "reports absolute lines in a narrowed buffer"
+      (insert "(a)\n(b)\n  (foo)")
+      (narrow-to-region 9 (point-max))
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 3))
+      (widen))
+
     (it "omits file for a buffer without one"
       (spy-on 'buffer-file-name :and-return-value nil)
       (insert "(foo)")
