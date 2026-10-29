@@ -378,6 +378,7 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
     ["Load File (C-c C-k)" lpy-nrepl-eval-buffer-or-shell]
     "---"
     ["Macroexpand (C-c C-m)" lpy-nrepl-macroexpand]
+    "---"
     ["Show REPL (C-c C-z)" lpy-nrepl-switch-to-repl]
     ["Start nREPL Server" lpy-nrepl-start]
     ["Connect to nREPL" lpy-nrepl-connect]
