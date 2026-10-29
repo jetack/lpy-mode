@@ -147,6 +147,10 @@
   '("def" "async-def" "defmacro")
   "Names in Lpy that define functions, macros, etc.")
 
+(defconst lpy-font-lock--docstring-forms
+  (append lpy-font-lock--definitions '("class"))
+  "Forms whose first string after the signature is a docstring.")
+
 ;;;; Operators
 
 (defconst lpy-font-lock--operators
@@ -424,8 +428,7 @@
 (defun lpy-font-lock--string-is-function-docstring? (syntax)
   "Is string SYNTAX specifically a function docstring?"
   (-when-let (inner-symbol (lpy--syntax->inner-symbol syntax))
-    (when (and (not (s-equals? "defmethod" inner-symbol))
-               (s-matches? (rx "def" (not blank)) inner-symbol))
+    (when (member inner-symbol lpy-font-lock--docstring-forms)
       (let ((start-point (point)))
         (save-excursion
           (lpy--goto-inner-sexp syntax)
