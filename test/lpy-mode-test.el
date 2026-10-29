@@ -546,6 +546,9 @@ c]+-])" :indented))
     (expect (lpy-test--last-string-face "(def f [x] ^''''x''' \"doc\")")
             :to-equal 'font-lock-doc-face)
     (expect (lpy-test--last-string-face "(def f [x] ^`'''x''' \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    ;; A star wrapper glues to the next quote as a meta, like the `^'.
+    (expect (lpy-test--last-string-face "(def f [x] ^'*'''(a b) \"doc\")")
             :to-equal 'font-lock-doc-face))
 
 

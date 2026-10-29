@@ -575,7 +575,8 @@ a chain of meta indicators (quote, backquote, `~@', `~') each followed
 by a non-space, then a bracketed form, a string or a symbol token.
 The chain ends once one is consumed and a string token starts, since
 the tokenizer tries the string pattern first, so glued quotes that make
-a triple-quoted string open it after the first meta.
+a triple-quoted string open it after the first meta.  A star wrapper
+inside the chain glues to the next quote as a meta, as `^' does.
 The form a meta indicator wraps is the next token, past any comma or
 comment, so `^\\=',x' wraps `x' and a string on the line after
 `^\\=';c' is the annotation, not the docstring.
