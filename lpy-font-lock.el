@@ -285,16 +285,89 @@
    '(2 font-lock-type-face))
   "Lpy class keywords.")
 
+(defconst lpy-font-lock--symbol-token-rx
+  (rx (1+ (not (any " \t\n\r\f" "()[]{}\",;"))))
+  "A Lispython symbol token, dotted names like `functools.cache' included.
+
+Mirrors the symbol pattern of the tokenizer (`_TOKEN_PATTERNS' in
+lispy/core/parser.py) rather than Emacs word or symbol syntax, which
+counts `,' as a symbol constituent here.")
+
+(defun lpy-font-lock--decorator-forms-end ()
+  "Return the end of the decorator form at point, or nil when unbalanced."
+  (save-excursion
+    (ignore-errors (forward-sexp) (point))))
+
+(defun lpy-font-lock--match-decorator-name (limit)
+  "Match the next decorator name before LIMIT in a `deco' form.
+
+Point is inside the `[...]' of decorators or at the `(...)' of a single
+call decorator.  A decorator is a name or a call; only the name, or the
+call's head, is matched - never the call's arguments.  Point ends past
+the whole decorator so the next call resumes at its sibling; commas
+between decorators are whitespace, as in Lispython."
+  ;; Every call either moves point forward or returns nil: font-lock
+  ;; calls an anchored matcher again for as long as it returns non-nil
+  ;; with point before LIMIT, so a match that leaves point in place
+  ;; (an unbalanced call whose `forward-sexp' fails) hangs Emacs.
+  ;; A name is stepped over by its token, not `forward-sexp': `,' has
+  ;; symbol syntax here, but Lispython reads `d1,d2' as two names.
+  (let (found)
+    (while (and (not found)
+                (progn (lpy-font-lock--skip-token-filler) (< (point) limit))
+                (not (eq (char-syntax (char-after)) ?\))))
+      (let ((start (point)))
+        (cond
+         ((eq (char-after) ?\()
+          (save-excursion
+            (forward-char)
+            (forward-comment (buffer-size))
+            (when (looking-at lpy-font-lock--symbol-token-rx)
+              (setq found (match-data))))
+          (ignore-errors (forward-sexp)))
+         ((looking-at lpy-font-lock--symbol-token-rx)
+          (setq found (match-data))
+          (goto-char (match-end 0)))
+         (t
+          (ignore-errors (forward-sexp))))
+        (when (<= (point) start)
+          (goto-char limit))))
+    (if found
+        (progn (set-match-data found) t)
+      (goto-char limit)
+      nil)))
+
 (defconst lpy-font-lock--kwds-decorators
   (list
-   (rx symbol-start
-       "deco"
-       symbol-end
-       (1+ space)
-       (1+ word))
+   (rx-to-string
+    `(: "(" (0+ (any " \t\n"))
+        (group-n 1
+                 "deco"
+                 symbol-end
+                 (1+ (any " \t\n"))
+                 (regexp ,lpy-font-lock--symbol-token-rx))))
 
-   '(0 font-lock-type-face))
-  "Lpylight the symbol after `deco' macros keywords.")
+   '(1 font-lock-type-face))
+  "Lpylight a `deco' form's head and its single decorator name.")
+
+(defconst lpy-font-lock--kwds-decorator-groups
+  (list
+   (rx "(" (0+ (any " \t\n"))
+       (group-n 1 "deco")
+       symbol-end
+       (1+ (any " \t\n"))
+       (group-n 2 (any "([")))
+
+   '(1 font-lock-type-face)
+   '(lpy-font-lock--match-decorator-name
+     (progn
+       (goto-char (match-beginning 2))
+       (prog1 (lpy-font-lock--decorator-forms-end)
+         (when (eq (char-after) ?\[)
+           (forward-char))))
+     nil
+     (0 font-lock-type-face)))
+  "Lpylight `deco' with a decorator list or call, and each decorator name.")
 
 (defconst lpy-font-lock--kwds-imports
   (list
@@ -449,6 +522,80 @@ plain symbol `^', so it is itself the first body form."
               (not (memq next '(?\" ?, ?\) ?\] ?\})))
               (not (memq (char-syntax next) '(?\s ?>)))))))
 
+(defun lpy-font-lock--skip-token-filler ()
+  "Skip what Lispython's tokenizer drops between tokens.
+
+That is whitespace, newlines, comments and commas; a comma is
+whitespace to Lispython except right after `(' or `{'."
+  (while (progn (forward-comment (buffer-size))
+                (eq (char-after) ?,))
+    (forward-char)))
+
+(defconst lpy-font-lock--string-token-rx
+  "[[:alnum:]_]*\\(\"\"\"\\|'''\\|\"\\)"
+  "The opening of a Lispython string token: a prefix, then its delimiter.
+
+Mirrors the string pattern of the tokenizer (`_TOKEN_PATTERNS' in
+lispy/core/parser.py); group 1 is the delimiter.")
+
+(defun lpy-font-lock--skip-string-token ()
+  "Move past the string token whose opening is at point.
+
+A triple-quoted string is one token to Lispython, but three strings to
+`forward-sexp', so it is scanned to its closing delimiter, which a
+backslash escapes.  An unterminated string runs to the end of the
+buffer."
+  (looking-at lpy-font-lock--string-token-rx)
+  (let ((delimiter (match-string 1)))
+    (if (equal delimiter "\"")
+        (progn (goto-char (match-beginning 1))
+               (forward-sexp))
+      (goto-char (match-end 0))
+      (while (and (search-forward delimiter nil 'move)
+                  (let ((escapes (save-excursion
+                                   (goto-char (match-beginning 0))
+                                   (- (skip-chars-backward "\\\\")))))
+                    (= (% escapes 2) 1)))
+        (goto-char (1+ (match-beginning 0)))))))
+
+(defun lpy-font-lock--skip-annotation ()
+  "Move past the return annotation that starts at point.
+
+Point is where `lpy-font-lock--annotation-at-point?' holds.  The
+annotation's extent mirrors Lispython's tokenizer (`_TOKEN_PATTERNS'
+in lispy/core/parser.py) instead of trusting `forward-sexp': Emacs
+continues a symbol over expression-prefix characters, so a scan from
+`^' in front of a quoted, quasiquoted, unquoted or starred list stops
+just before that list.  The tokenizer reads `^', up to two `*', then
+a chain of meta indicators (quote, backquote, `~@', `~') each followed
+by a non-space, then a bracketed form, a string or a symbol token.
+The form a meta indicator wraps is the next token, past any comma or
+comment, so `^\\=',x' wraps `x' and a string on the line after
+`^\\=';c' is the annotation, not the docstring.
+A prefix that ends in symbol characters runs on into the symbol
+token, which stops at whitespace, a closing delimiter, a comma, a
+string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
+`^\\='' and `^*'."
+  (forward-char)                        ; `^'
+  (let ((in-symbol t))
+    (skip-chars-forward "*" (+ (point) 2))
+    (while (and (looking-at "~@\\|['`~]")
+                (let ((next (char-after (match-end 0))))
+                  (and next (not (memq (char-syntax next) '(?\s ?>))))))
+      (goto-char (match-end 0))
+      (lpy-font-lock--skip-token-filler)
+      (setq in-symbol nil)
+      (when (looking-at "\\*\\{1,2\\}")
+        (goto-char (match-end 0))
+        (setq in-symbol t)))
+    (cond
+     ((looking-at "[({[]")                ; opening token
+      (forward-sexp))
+     ((and (not in-symbol) (looking-at lpy-font-lock--string-token-rx))
+      (lpy-font-lock--skip-string-token))
+     (t                                   ; rest of a symbol token
+      (skip-chars-forward "^ \t\n\r\f)}]\"[,")))))
+
 (defun lpy-font-lock--first-body-form-start (head)
   "Return the start of the first body form of the HEAD form after point.
 
@@ -459,10 +606,10 @@ The body does not sit at a fixed sexp index, so the signature is
 walked piece by piece:
 - type parameters glued to the name, `f[T]', scan as a second sexp;
 - `def', `async-def' and `defmacro' (which expands to `def') take an
-  optional return annotation before the body.  `^(sub list int)' scans
-  as the symbol `^' followed by a list, and `^list[int]' as a symbol
-  followed by a glued bracket.  `class' takes none: the compiler only
-  strips a leading annotation from function bodies."
+  optional return annotation before the body, skipped by
+  `lpy-font-lock--skip-annotation'; `^list[int]' leaves a glued
+  bracket after it.  `class' takes none: the compiler only strips a
+  leading annotation from function bodies."
   (ignore-errors
     (forward-sexp 2)                    ; head and name
     (lpy-font-lock--skip-glued-bracket) ; type parameters
@@ -470,9 +617,7 @@ walked piece by piece:
     (forward-comment (buffer-size))
     (when (and (member head lpy-font-lock--definitions)
                (lpy-font-lock--annotation-at-point?))
-      (forward-sexp)
-      (when (eq (char-before) ?^)       ; `^' before a list or quote
-        (forward-sexp))
+      (lpy-font-lock--skip-annotation)
       (lpy-font-lock--skip-glued-bracket)
       (forward-comment (buffer-size)))
     (unless (eq (char-syntax (char-after)) ?\))
@@ -538,6 +683,7 @@ applied with success to `ielm'."
         lpy-font-lock--kwds-constants
         lpy-font-lock--kwds-definitions
         lpy-font-lock--kwds-decorators
+        lpy-font-lock--kwds-decorator-groups
         lpy-font-lock--kwds-exceptions
         lpy-font-lock--kwds-func-modifiers
         lpy-font-lock--kwds-imports

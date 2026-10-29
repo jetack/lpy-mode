@@ -125,6 +125,30 @@ faces of the surrounding signature."
     (search-backward "\"")
     (get-text-property (1- (point)) 'face)))
 
+(defun lpy-test--anchored-matcher-terminates? (keyword text)
+  "Does the anchored matcher of font-lock KEYWORD finish on TEXT?
+
+Replay the loop of `font-lock-fontify-anchored-keywords' over every
+match of KEYWORD in TEXT, but cap the matcher calls: a matcher that
+returns non-nil without moving point makes font-lock spin forever, and
+`with-timeout' cannot interrupt a busy Lisp loop in batch, so a
+regression must fail the spec rather than hang the suite."
+  (with-temp-buffer
+    (lpy-mode)
+    (insert text)
+    (goto-char (point-min))
+    (let* ((anchored (nth 2 keyword))
+           (matcher (nth 0 anchored))
+           (budget 1000))
+      (while (and (> budget 0) (re-search-forward (car keyword) nil t))
+        (let ((limit (eval (nth 1 anchored) t)))
+          (unless (and (numberp limit) (> limit (point)))
+            (setq limit (line-end-position)))
+          (save-match-data
+            (while (and (> budget 0) (< (point) limit) (funcall matcher limit))
+              (setq budget (1- budget))))))
+      (> budget 0))))
+
 ;; Tests `inferior-lpy-font-lock-kwds'. These keywords are relatively advanced
 ;; as they do additional checks based on comint variables.
 (buttercup-define-matcher :shell-faces (text)
