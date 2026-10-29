@@ -121,16 +121,23 @@ test log buffer are cleaned up afterwards."
            (kill-buffer lpy-nrepl-test--servers-buffer-name))))))
 
 (ert-deftest lpy-nrepl-test-with-servers-spares-live-repl-buffer ()
-  ;; Never writes to the real buffer: only compares it before and after.
-  (let* ((live (get-buffer "*lpy-nrepl*"))
-         (before (and live (with-current-buffer live (buffer-string)))))
-    (lpy-nrepl-test--with-servers (srv)
-      (lpy-nrepl-connect (lpy-nrepl-test--port srv))
-      (should (get-buffer lpy-nrepl-test--servers-buffer-name)))
-    (should-not (get-buffer lpy-nrepl-test--servers-buffer-name))
-    (should (eq (get-buffer "*lpy-nrepl*") live))
-    (when live
-      (should (equal (with-current-buffer live (buffer-string)) before)))))
+  ;; Never writes to a pre-existing real buffer: only compares it before and
+  ;; after.  Batch has none, so the test creates (and removes) a stand-in.
+  (let* ((created (not (get-buffer "*lpy-nrepl*")))
+         (live (get-buffer-create "*lpy-nrepl*"))
+         (before (progn
+                   (when created
+                     (with-current-buffer live (insert "user history")))
+                   (with-current-buffer live (buffer-string)))))
+    (unwind-protect
+        (progn
+          (lpy-nrepl-test--with-servers (srv)
+            (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+            (should (get-buffer lpy-nrepl-test--servers-buffer-name)))
+          (should-not (get-buffer lpy-nrepl-test--servers-buffer-name))
+          (should (buffer-live-p live))
+          (should (equal (with-current-buffer live (buffer-string)) before)))
+      (when (and created (buffer-live-p live)) (kill-buffer live)))))
 
 (ert-deftest lpy-nrepl-test-failed-connect-keeps-connection ()
   (lpy-nrepl-test--with-servers (srv)
