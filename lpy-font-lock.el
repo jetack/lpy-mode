@@ -597,7 +597,8 @@ string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
             metas (1+ metas))
       (when (looking-at "\\*\\{1,2\\}")
         (goto-char (match-end 0))
-        (setq in-symbol t)))
+        (setq in-symbol t
+              metas 0)))
     (cond
      ((looking-at "[({[]")                ; opening token
       (forward-sexp))

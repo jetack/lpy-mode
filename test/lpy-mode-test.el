@@ -526,7 +526,7 @@ c]+-])" :indented))
 
   (it "does not take a starred prefix before an opening or a quote as an annotation"
     ;; The tokenizer refuses these (bad-prefix), so there is no annotation
-    ;; and the string is not the first body form's successor.
+    ;; and the string is not the first body form.
     (expect (lpy-test--last-string-face "(def f [x] ^*(a b) \"doc\")")
             :to-equal 'font-lock-string-face)
     (expect (lpy-test--last-string-face "(def f [x] ^**(a b) \"doc\")")
