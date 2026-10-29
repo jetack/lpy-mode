@@ -333,6 +333,16 @@ c]+-])" :indented))
   (it "to deco decorator"
     (expect "(«t:deco a-dec» («k:def» «f:func-def» []))" :faces))
 
+  (it "to deco decorator lists"
+    (expect "(«t:deco» [«t:d1» «t:d2»] («k:def» «f:f» []))" :faces))
+
+  (it "to deco call decorators"
+    (expect "(«t:deco» («t:server.feature» x) («k:def» «f:f» []))" :faces))
+
+  (it "to deco decorator lists mixing names and calls"
+    (expect "(«t:deco» [«t:d1» («t:server.feature» x)] («k:def» «f:f» []))"
+            :faces))
+
   (it "to imports"
     (expect "(«k:import» x [y «k::as» z])" :faces))
 
@@ -461,6 +471,32 @@ c]+-])" :indented))
             :to-equal 'font-lock-doc-face)
     (expect (lpy-test--last-string-face "(def f [x] ^Callable[[int] str] \"doc\")")
             :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a quoted compound return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^'(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a quasiquoted compound return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^`(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after an unquoted compound return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^~(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^~@(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a starred compound return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^*(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^**(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^*'(a b) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "treats a bracket after a compound return annotation as a body form"
+    (expect (lpy-test--last-string-face "(def f [x] ^(sub list int)[0] \"doc\")")
+            :to-equal 'font-lock-string-face))
 
   (it "treats a lone ^ as a body form, not an annotation"
     (expect (lpy-test--last-string-face "(def f [x] ^\"Foo\" \"doc\")")
