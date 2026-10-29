@@ -579,6 +579,22 @@ c]+-])" :indented))
       (lpy-nrepl-eval-buffer-contents)
       (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
 
+    (it "counts a tab as one character in the column"
+      (insert "\t(foo)")
+      (lpy-nrepl-eval-region (point-min) (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 2))
+      (erase-buffer)
+      (insert "x\t= 1; (foo)")
+      (lpy-nrepl-eval-region 8 (point-max))
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
+
+    (it "counts Hangul as one character per column"
+      (insert "한글 (foo)")
+      (lpy-nrepl-eval-region 4 (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 4)))
+
     (it "leaves point where it was"
       (insert "x = 1\n  (foo bar)")
       (let ((here (point)))

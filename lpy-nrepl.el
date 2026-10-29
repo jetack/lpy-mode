@@ -383,14 +383,16 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
   "Return the nREPL eval fields locating buffer position POS.
 The fields are `file' (when the buffer visits one), 1-based `line' and
 1-based `column'; the server reports errors at that position."
-  ;; `current-column' counts back only to `point-min', so widen first.
+  ;; The column is a character offset, as Python counts code points; never
+  ;; `current-column', which counts display width (tabs, wide Hangul).
+  ;; `line-beginning-position' stops at `point-min', so widen first.
   (save-excursion
     (save-restriction
       (widen)
       (goto-char pos)
       (append (and (buffer-file-name) `((file . ,(buffer-file-name))))
               `((line . ,(line-number-at-pos pos t))
-                (column . ,(1+ (current-column))))))))
+                (column . ,(1+ (- pos (line-beginning-position)))))))))
 
 (defun lpy-nrepl--eval-code (code start)
   "Send CODE, which begins at buffer position START, for evaluation.
