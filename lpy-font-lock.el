@@ -425,17 +425,42 @@
   "Is string SYNTAX specifically a module docstring?"
   (= 1 (lpy--syntax->string-start syntax)))
 
+(defun lpy-font-lock--first-body-form-start (head)
+  "Return the start of the first body form of the HEAD form after point.
+
+Point is just inside the form's opening paren.  Return nil when the
+form ends before a body form.
+
+The body does not sit at a fixed sexp index, so the signature is
+walked piece by piece:
+- type parameters glued to the name, `f[T]', scan as a second sexp;
+- `def', `async-def' and `defmacro' (which expands to `def') take an
+  optional return annotation before the body, and `^(sub list int)'
+  scans as the symbol `^' followed by a list.  `class' takes none: the
+  compiler only strips a leading annotation from function bodies."
+  (ignore-errors
+    (forward-sexp 2)                    ; head and name
+    (when (eq (char-after) ?\[)         ; glued type parameters
+      (forward-sexp))
+    (forward-sexp)                      ; arguments or bases
+    (forward-comment (buffer-size))
+    (when (and (member head lpy-font-lock--definitions)
+               (eq (char-after) ?^))
+      (forward-sexp)
+      (when (eq (char-before) ?^)       ; bare `^' before a list or string
+        (forward-sexp))
+      (forward-comment (buffer-size)))
+    (unless (eq (char-syntax (char-after)) ?\))
+      (point))))
+
 (defun lpy-font-lock--string-is-function-docstring? (syntax)
   "Is string SYNTAX specifically a function docstring?"
   (-when-let (inner-symbol (lpy--syntax->inner-symbol syntax))
     (when (member inner-symbol lpy-font-lock--docstring-forms)
-      (let ((start-point (point)))
-        (save-excursion
-          (lpy--goto-inner-sexp syntax)
-
-          (-when-let* ((start (ignore-errors (scan-sexps (point) 3)))
-                       (end (ignore-errors (scan-sexps (point) 4))))
-            (<= start start-point end)))))))
+      (save-excursion
+        (lpy--goto-inner-sexp syntax)
+        (eql (lpy-font-lock--first-body-form-start inner-symbol)
+             (lpy--syntax->string-start syntax))))))
 
 ;;;; Exposes
 

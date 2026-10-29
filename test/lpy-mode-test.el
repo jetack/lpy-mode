@@ -318,9 +318,8 @@ c]+-])" :indented))
   (it "to constants"
     (expect "«c:True» Truex xTrue" :faces))
 
-  ;; FIXME
-  (xit "to function defs"
-    (expect "«k:def» «f:func» defx func xdef func" :faces))
+  (it "to function defs"
+    (expect "(«k:def» «f:func» []) (defx func) (xdef func)" :faces))
 
   (it "to exceptions"
     (expect "«t:ValueError» ValueErrorx xValueError" :faces))
@@ -448,6 +447,18 @@ c]+-])" :indented))
 
   (it "ignores calls to symbols merely containing def"
     (expect "(undefined x y «s:\"bar\"»)" :faces))
+
+  (it "detects a docstring after a return annotation"
+    (expect "(«k:def» «f:f» [x] ^float «d:\"doc\"»)" :faces))
+
+  (it "detects a docstring after a compound return annotation"
+    (expect "(«k:def» «f:f» [x] «b:^»(«k:sub» «b:list» «b:int») «d:\"doc\"»)" :faces))
+
+  (it "detects a docstring after glued type parameters on a def"
+    (expect "(«k:def» «f:f»[T] [x] «d:\"doc\"»)" :faces))
+
+  (it "detects a docstring after glued type parameters on a class"
+    (expect "(«k:class» «t:K»[T] [Base] «d:\"doc\"»)" :faces))
 
   (it "has only first string of a def as the docstring"
     (expect "(«k:def» «f:foo» [] «d:\"bar\"» «s:\"baz\"»)" :faces)))
