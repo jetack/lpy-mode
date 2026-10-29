@@ -304,26 +304,34 @@ counts `,' as a symbol constituent here.")
 Point is inside the `[...]' of decorators or at the `(...)' of a single
 call decorator.  A decorator is a name or a call; only the name, or the
 call's head, is matched - never the call's arguments.  Point ends past
-the whole decorator so the next call resumes at its sibling."
+the whole decorator so the next call resumes at its sibling; commas
+between decorators are whitespace, as in Lispython."
   ;; Every call either moves point forward or returns nil: font-lock
   ;; calls an anchored matcher again for as long as it returns non-nil
   ;; with point before LIMIT, so a match that leaves point in place
   ;; (an unbalanced call whose `forward-sexp' fails) hangs Emacs.
+  ;; A name is stepped over by its token, not `forward-sexp': `,' has
+  ;; symbol syntax here, but Lispython reads `d1,d2' as two names.
   (let (found)
     (while (and (not found)
-                (progn (forward-comment (buffer-size)) (< (point) limit))
+                (progn (lpy-font-lock--skip-token-filler) (< (point) limit))
                 (not (eq (char-syntax (char-after)) ?\))))
-      (cond
-       ((eq (char-after) ?\()
-        (save-excursion
-          (forward-char)
-          (forward-comment (buffer-size))
-          (when (looking-at lpy-font-lock--symbol-token-rx)
-            (setq found (match-data)))))
-       ((looking-at lpy-font-lock--symbol-token-rx)
-        (setq found (match-data))))
-      (unless (ignore-errors (forward-sexp) t)
-        (goto-char limit)))
+      (let ((start (point)))
+        (cond
+         ((eq (char-after) ?\()
+          (save-excursion
+            (forward-char)
+            (forward-comment (buffer-size))
+            (when (looking-at lpy-font-lock--symbol-token-rx)
+              (setq found (match-data))))
+          (ignore-errors (forward-sexp)))
+         ((looking-at lpy-font-lock--symbol-token-rx)
+          (setq found (match-data))
+          (goto-char (match-end 0)))
+         (t
+          (ignore-errors (forward-sexp))))
+        (when (<= (point) start)
+          (goto-char limit))))
     (if found
         (progn (set-match-data found) t)
       (goto-char limit)
@@ -332,21 +340,22 @@ the whole decorator so the next call resumes at its sibling."
 (defconst lpy-font-lock--kwds-decorators
   (list
    (rx-to-string
-    `(: symbol-start
-        "deco"
-        symbol-end
-        (1+ space)
-        (regexp ,lpy-font-lock--symbol-token-rx)))
+    `(: "(" (0+ (any " \t\n"))
+        (group-n 1
+                 "deco"
+                 symbol-end
+                 (1+ (any " \t\n"))
+                 (regexp ,lpy-font-lock--symbol-token-rx))))
 
-   '(0 font-lock-type-face))
-  "Lpylight the symbol after `deco' macros keywords.")
+   '(1 font-lock-type-face))
+  "Lpylight a `deco' form's head and its single decorator name.")
 
 (defconst lpy-font-lock--kwds-decorator-groups
   (list
-   (rx symbol-start
+   (rx "(" (0+ (any " \t\n"))
        (group-n 1 "deco")
        symbol-end
-       (1+ space)
+       (1+ (any " \t\n"))
        (group-n 2 (any "([")))
 
    '(1 font-lock-type-face)
@@ -522,6 +531,33 @@ whitespace to Lispython except right after `(' or `{'."
                 (eq (char-after) ?,))
     (forward-char)))
 
+(defconst lpy-font-lock--string-token-rx
+  "[[:alnum:]_]*\\(\"\"\"\\|'''\\|\"\\)"
+  "The opening of a Lispython string token: a prefix, then its delimiter.
+
+Mirrors the string pattern of the tokenizer (`_TOKEN_PATTERNS' in
+lispy/core/parser.py); group 1 is the delimiter.")
+
+(defun lpy-font-lock--skip-string-token ()
+  "Move past the string token whose opening is at point.
+
+A triple-quoted string is one token to Lispython, but three strings to
+`forward-sexp', so it is scanned to its closing delimiter, which a
+backslash escapes.  An unterminated string runs to the end of the
+buffer."
+  (looking-at lpy-font-lock--string-token-rx)
+  (let ((delimiter (match-string 1)))
+    (if (equal delimiter "\"")
+        (progn (goto-char (match-beginning 1))
+               (forward-sexp))
+      (goto-char (match-end 0))
+      (while (and (search-forward delimiter nil 'move)
+                  (let ((escapes (save-excursion
+                                   (goto-char (match-beginning 0))
+                                   (- (skip-chars-backward "\\\\")))))
+                    (= (% escapes 2) 1)))
+        (goto-char (1+ (match-beginning 0)))))))
+
 (defun lpy-font-lock--skip-annotation ()
   "Move past the return annotation that starts at point.
 
@@ -555,9 +591,8 @@ string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
     (cond
      ((looking-at "[({[]")                ; opening token
       (forward-sexp))
-     ((and (not in-symbol) (looking-at "\\w*\""))  ; string token
-      (goto-char (1- (match-end 0)))
-      (forward-sexp))
+     ((and (not in-symbol) (looking-at lpy-font-lock--string-token-rx))
+      (lpy-font-lock--skip-string-token))
      (t                                   ; rest of a symbol token
       (skip-chars-forward "^ \t\n\r\f)}]\"[,")))))
 

@@ -347,6 +347,18 @@ c]+-])" :indented))
     (expect "(«t:deco a-dec»\n(«k:def» «f:f» []))" :faces)
     (expect "(«t:deco» [«t:d1»\n«t:d2»] («k:def» «f:f» []))" :faces))
 
+  (it "to deco decorator lists separated by commas"
+    (expect "(«t:deco» [«t:d1»,«t:d2»] («k:def» «f:f» []))" :faces)
+    (expect "(«t:deco» [«t:d1», («t:f» x),«t:d2»] («k:def» «f:g» []))" :faces))
+
+  (it "to deco only at the head of a form"
+    (expect "(setv «k:deco» [x y])" :faces)
+    (expect "(«b:=» «k:deco» [x y])" :faces))
+
+  (it "to deco forms broken across lines"
+    (expect "(«t:deco»\n  [«t:d1» «t:d2»]\n  («k:def» «f:f» [] 1))" :faces)
+    (expect "(«t:deco\n  a-dec»\n  («k:def» «f:f» [] 1))" :faces))
+
   (it "to deco call decorators left unbalanced, without hanging"
     (expect (lpy-test--anchored-matcher-terminates?
              lpy-font-lock--kwds-decorator-groups
@@ -523,6 +535,11 @@ c]+-])" :indented))
   (it "takes the form after a comment as the value of a meta indicator"
     (expect (lpy-test--last-string-face "(def f [x] ^';c\n \"doc\")")
             :to-equal 'font-lock-string-face))
+
+  (it "detects a docstring after a quoted triple-quoted string annotation"
+    (expect (lpy-test--last-string-face
+             "(def f [x] ^'r\"\"\"a\"\"\" \"doc\")")
+            :to-equal 'font-lock-doc-face))
 
   (it "treats a bracket after a compound return annotation as a body form"
     (expect (lpy-test--last-string-face "(def f [x] ^(sub list int)[0] \"doc\")")
