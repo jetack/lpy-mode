@@ -172,6 +172,17 @@ test log buffer are cleaned up afterwards."
         (should-not (cl-some (lambda (m) (string-match-p "disconnected" m))
                              lpy-nrepl-test--messages))))))
 
+(ert-deftest lpy-nrepl-test-sentinel-drops-broken-connection ()
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (let ((proc lpy-nrepl--connection))
+      (setq lpy-nrepl--pending-callbacks '((1 . ignore)))
+      (lpy-nrepl--process-sentinel proc "connection broken by remote peer\n")
+      (should-not lpy-nrepl--connection)
+      (should-not lpy-nrepl--pending-callbacks)
+      (should-not (process-live-p proc))
+      (should-not (memq proc (process-list))))))
+
 ;; Shared setup for the REPL-log scroll tests.  Binds REPL to an isolated
 ;; log buffer prefilled with 100 lines, SRC to a source buffer shown in the
 ;; selected window, and WIN to a non-selected window showing REPL.
