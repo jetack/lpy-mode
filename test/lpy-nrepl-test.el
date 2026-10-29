@@ -217,7 +217,7 @@ test log buffer are cleaned up afterwards."
                     (eval-input
                      (lambda ()
                        (with-current-buffer src
-                         (lpy-nrepl--eval-code "(+ 1 2)"))))
+                         (lpy-nrepl--eval-code "(+ 1 2)" (point-min)))))
                     (eval-response
                      (lambda ()
                        (let ((id (alist-get 'id (json-parse-string

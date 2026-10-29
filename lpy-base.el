@@ -83,23 +83,32 @@
 
 ;;; Form Captures
 
-(defun lpy--current-form-string ()
-  "Get form containing current point as string plus a trailing newline."
+(defun lpy--current-form-bounds ()
+  "Get (START . END) of the form containing current point."
   (save-excursion
     (-when-let (start (lpy--goto-inner-char (syntax-ppss)))
       (while (ignore-errors (forward-sexp)))
+      (cons start (point)))))
 
-      (s-concat (buffer-substring-no-properties start (point))
-                "\n"))))
-
-(defun lpy--last-sexp-string ()
-  "Get form containing last s-exp point as string plus a trailing newline."
+(defun lpy--last-sexp-bounds ()
+  "Get (START . END) of the form containing last s-exp point."
   (save-excursion
     (-when-let (start (lpy--goto-last-sexp-start (syntax-ppss)))
       (while (ignore-errors (forward-sexp)))
+      (cons start (point)))))
 
-      (s-concat (buffer-substring-no-properties start (point))
-                "\n"))))
+(defun lpy--bounds-string (bounds)
+  "Get the text of BOUNDS, a (START . END) cons, plus a trailing newline."
+  (-when-let ((start . end) bounds)
+    (s-concat (buffer-substring-no-properties start end) "\n")))
+
+(defun lpy--current-form-string ()
+  "Get form containing current point as string plus a trailing newline."
+  (lpy--bounds-string (lpy--current-form-bounds)))
+
+(defun lpy--last-sexp-string ()
+  "Get form containing last s-exp point as string plus a trailing newline."
+  (lpy--bounds-string (lpy--last-sexp-bounds)))
 
 ;;; Provide:
 
