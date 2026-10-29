@@ -524,6 +524,90 @@ c]+-])" :indented))
       (goto-char (1+ paren-end))
       (expect (lpy--last-sexp-string) :to-equal (s-concat "(foo bar)" "\n")))))
 
+;;; nREPL Eval Position
+
+(describe "nREPL eval position"
+  :var (sent)
+  (before-all (lpy-mode--setup-syntax))
+  (before-each
+    (setq sent nil)
+    (spy-on 'lpy-nrepl--send :and-call-fake (lambda (msg &rest _) (setq sent msg)))
+    (spy-on 'buffer-file-name :and-return-value "/tmp/proj/app.lpy"))
+  (after-each (widen) (delete-region (point-min) (point-max)))
+
+  (cl-flet ((fields () (list (alist-get 'file sent) (alist-get 'line sent)
+                             (alist-get 'column sent))))
+    (it "sends the form start for current-form"
+      (insert "x = 1\n  (foo bar)")
+      (backward-char)
+      (lpy-nrepl-eval-current-form)
+      (expect (alist-get 'code sent) :to-equal "(foo bar)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 2 3)))
+
+    (it "sends the sexp start for last-sexp"
+      (insert "\n\n(a)  (foo bar)")
+      (lpy-nrepl-eval-last-sexp)
+      (expect (alist-get 'code sent) :to-equal "(foo bar)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 6)))
+
+    (it "counts from the first character after the trim for a region"
+      (insert "x = 1\n   \n  (foo bar)\n")
+      (lpy-nrepl-eval-region 7 (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo bar)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 3)))
+
+    (it "handles a multi-line region starting mid-line"
+      (insert "x = 1; (foo\n  bar)")
+      (lpy-nrepl-eval-region 8 (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo\n  bar)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
+
+    (it "sends line 1 column 1 for the buffer contents"
+      (insert "(foo)\n(bar)\n")
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 1)))
+
+    (it "reports absolute lines in a narrowed buffer"
+      (insert "(a)\n(b)\n  (foo)")
+      (narrow-to-region 9 (point-max))
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 3)))
+
+    (it "reports the real column when the narrowing starts mid-line"
+      (insert "x = 1; (foo)")
+      (narrow-to-region 8 (point-max))
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
+
+    (it "counts a tab as one character in the column"
+      (insert "\t(foo)")
+      (lpy-nrepl-eval-region (point-min) (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 2))
+      (erase-buffer)
+      (insert "x\t= 1; (foo)")
+      (lpy-nrepl-eval-region 8 (point-max))
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
+
+    (it "counts Hangul as one character per column"
+      (insert "한글 (foo)")
+      (lpy-nrepl-eval-region 4 (point-max))
+      (expect (alist-get 'code sent) :to-equal "(foo)")
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 4)))
+
+    (it "leaves point where it was"
+      (insert "x = 1\n  (foo bar)")
+      (let ((here (point)))
+        (lpy-nrepl-eval-last-sexp)
+        (expect (point) :to-equal here)))
+
+    (it "omits file for a buffer without one"
+      (spy-on 'buffer-file-name :and-return-value nil)
+      (insert "(foo)")
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (assq 'file sent) :to-be nil)
+      (expect (alist-get 'line sent) :to-equal 1))))
+
 ;;; Shell
 
 (nt-shell-describe "Shell"

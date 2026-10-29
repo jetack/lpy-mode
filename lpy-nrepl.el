@@ -379,38 +379,59 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 
 ;;; Eval Commands
 
-(defun lpy-nrepl--eval-code (code)
-  "Send CODE for evaluation, saving current buffer and point for overlay."
+(defun lpy-nrepl--position-fields (pos)
+  "Return the nREPL eval fields locating buffer position POS.
+The fields are `file' (when the buffer visits one), 1-based `line' and
+1-based `column'; the server reports errors at that position."
+  ;; The column is a character offset, as Python counts code points; never
+  ;; `current-column', which counts display width (tabs, wide Hangul).
+  ;; `line-beginning-position' stops at `point-min', so widen first.
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char pos)
+      (append (and (buffer-file-name) `((file . ,(buffer-file-name))))
+              `((line . ,(line-number-at-pos pos t))
+                (column . ,(1+ (- pos (line-beginning-position)))))))))
+
+(defun lpy-nrepl--eval-code (code start)
+  "Send CODE, which begins at buffer position START, for evaluation.
+Saves current buffer and point for the overlay.  CODE is trimmed, and the
+position sent is that of its first character after the trim."
   (setq lpy-nrepl--eval-buffer (current-buffer))
   (setq lpy-nrepl--eval-point (point))
-  (lpy-nrepl--send
-   `((op . "eval") (code . ,(string-trim code)))
-   #'lpy-nrepl--display-eval-result))
+  (let ((leading (- (length code) (length (string-trim-left code)))))
+    (lpy-nrepl--send
+     `((op . "eval") (code . ,(string-trim code))
+       ,@(lpy-nrepl--position-fields (+ start leading)))
+     #'lpy-nrepl--display-eval-result)))
+
+(defun lpy-nrepl--eval-bounds (bounds)
+  "Evaluate the text of BOUNDS, a (START . END) cons, via nREPL."
+  (-when-let ((start . end) bounds)
+    (lpy-nrepl--eval-code (buffer-substring-no-properties start end) start)))
 
 ;;;###autoload
 (defun lpy-nrepl-eval-last-sexp ()
   "Evaluate the last s-expression via nREPL.
 The result is displayed as an overlay and in the minibuffer."
   (interactive)
-  (-when-let (code (lpy--last-sexp-string))
-    (lpy-nrepl--eval-code code)))
+  (lpy-nrepl--eval-bounds (lpy--last-sexp-bounds)))
 
 ;;;###autoload
 (defun lpy-nrepl-eval-current-form ()
   "Evaluate the current form via nREPL.
 The result is displayed as an overlay and in the minibuffer."
   (interactive)
-  (-when-let (code (lpy--current-form-string))
-    (lpy-nrepl--eval-code code)))
+  (lpy-nrepl--eval-bounds (lpy--current-form-bounds)))
 
 ;;;###autoload
 (defun lpy-nrepl-eval-region (start end)
   "Evaluate the region between START and END via nREPL."
   (interactive "r")
-  (let ((code (string-trim (buffer-substring-no-properties start end))))
-    (when (string-empty-p code)
-      (user-error "Region is empty"))
-    (lpy-nrepl--eval-code code)))
+  (when (string-empty-p (string-trim (buffer-substring-no-properties start end)))
+    (user-error "Region is empty"))
+  (lpy-nrepl--eval-code (buffer-substring-no-properties start end) start))
 
 ;;;###autoload
 (defun lpy-nrepl-eval-buffer ()
@@ -433,7 +454,7 @@ Sends the buffer text directly as an eval operation."
   (let ((code (buffer-substring-no-properties (point-min) (point-max))))
     (when (string-empty-p (string-trim code))
       (user-error "Buffer is empty"))
-    (lpy-nrepl--eval-code code)))
+    (lpy-nrepl--eval-code code (point-min))))
 
 ;;;###autoload
 (defun lpy-nrepl-macroexpand ()
