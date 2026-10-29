@@ -340,11 +340,10 @@ between decorators are whitespace, as in Lispython."
 (defconst lpy-font-lock--kwds-decorators
   (list
    (rx-to-string
-    `(: "(" (0+ (any " \t\n"))
+    `(: "(" (0+ (any " \t\n\r\f"))
         (group-n 1
                  "deco"
-                 symbol-end
-                 (1+ (any " \t\n"))
+                 (1+ (any " \t\n\r\f"))
                  (regexp ,lpy-font-lock--symbol-token-rx))))
 
    '(1 font-lock-type-face))
@@ -352,10 +351,9 @@ between decorators are whitespace, as in Lispython."
 
 (defconst lpy-font-lock--kwds-decorator-groups
   (list
-   (rx "(" (0+ (any " \t\n"))
+   (rx "(" (0+ (any " \t\n\r\f"))
        (group-n 1 "deco")
-       symbol-end
-       (1+ (any " \t\n"))
+       (1+ (any " \t\n\r\f"))
        (group-n 2 (any "([")))
 
    '(1 font-lock-type-face)
@@ -515,12 +513,18 @@ Mirror Lispython's tokenizer: `^' makes an annotation only when the
 annotated form follows it directly - `^int', `^(sub list int)',
 `^[...]', `^{...}', `^\\='x'.  A `^' followed by whitespace, a comma
 \(whitespace to Lispython), a string or a closing delimiter is the
-plain symbol `^', so it is itself the first body form."
+plain symbol `^', so it is itself the first body form.  Stars after
+the `^' make an annotation only when a symbol character follows them
+\(`^*Ts', `^**P'); before an opening, a quote or the end of the token
+\(`^*(a)', `^*\='a', `^*') the tokenizer refuses the prefix, so no
+annotation is claimed."
   (and (eq (char-after) ?^)
        (let ((next (char-after (1+ (point)))))
          (and next
               (not (memq next '(?\" ?, ?\) ?\] ?\})))
-              (not (memq (char-syntax next) '(?\s ?>)))))))
+              (not (memq (char-syntax next) '(?\s ?>)))
+              (not (looking-at
+                    "\\^\\*+\\(?:[({[]\\|['`~]\\|[] \t\n\r\f\v)}\"[,]\\|\\'\\)"))))))
 
 (defun lpy-font-lock--skip-token-filler ()
   "Skip what Lispython's tokenizer drops between tokens.
@@ -566,9 +570,12 @@ annotation's extent mirrors Lispython's tokenizer (`_TOKEN_PATTERNS'
 in lispy/core/parser.py) instead of trusting `forward-sexp': Emacs
 continues a symbol over expression-prefix characters, so a scan from
 `^' in front of a quoted, quasiquoted, unquoted or starred list stops
-just before that list.  The tokenizer reads `^', up to two `*', then
+just before that list.  The tokenizer reads `^', then
 a chain of meta indicators (quote, backquote, `~@', `~') each followed
 by a non-space, then a bracketed form, a string or a symbol token.
+The chain ends once one is consumed and a string token starts, since
+the tokenizer tries the string pattern first, so glued quotes that make
+a triple-quoted string open it after the first meta.
 The form a meta indicator wraps is the next token, past any comma or
 comment, so `^\\=',x' wraps `x' and a string on the line after
 `^\\=';c' is the annotation, not the docstring.
@@ -577,14 +584,17 @@ token, which stops at whitespace, a closing delimiter, a comma, a
 string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
 `^\\='' and `^*'."
   (forward-char)                        ; `^'
-  (let ((in-symbol t))
-    (skip-chars-forward "*" (+ (point) 2))
-    (while (and (looking-at "~@\\|['`~]")
+  (let ((in-symbol t)
+        (metas 0))
+    (while (and (or (= metas 0)
+                    (not (looking-at lpy-font-lock--string-token-rx)))
+                (looking-at "~@\\|['`~]")
                 (let ((next (char-after (match-end 0))))
                   (and next (not (memq (char-syntax next) '(?\s ?>))))))
       (goto-char (match-end 0))
       (lpy-font-lock--skip-token-filler)
-      (setq in-symbol nil)
+      (setq in-symbol nil
+            metas (1+ metas))
       (when (looking-at "\\*\\{1,2\\}")
         (goto-char (match-end 0))
         (setq in-symbol t)))

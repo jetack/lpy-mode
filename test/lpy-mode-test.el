@@ -347,6 +347,10 @@ c]+-])" :indented))
     (expect "(«t:deco a-dec»\n(«k:def» «f:f» []))" :faces)
     (expect "(«t:deco» [«t:d1»\n«t:d2»] («k:def» «f:f» []))" :faces))
 
+  (it "to deco forms separated by a carriage return or form feed"
+    (expect "(«t:deco\ra-dec» («k:def» «f:f» []))" :faces)
+    (expect "(\f«t:deco»\f[«t:d1»] («k:def» «f:f» []))" :faces))
+
   (it "to deco decorator lists separated by commas"
     (expect "(«t:deco» [«t:d1»,«t:d2»] («k:def» «f:f» []))" :faces)
     (expect "(«t:deco» [«t:d1», («t:f» x),«t:d2»] («k:def» «f:g» []))" :faces))
@@ -520,13 +524,30 @@ c]+-])" :indented))
     (expect (lpy-test--last-string-face "(def f [x] ^~@(a b) \"doc\")")
             :to-equal 'font-lock-doc-face))
 
-  (it "detects a docstring after a starred compound return annotation"
+  (it "does not take a starred prefix before an opening or a quote as an annotation"
+    ;; The tokenizer refuses these (bad-prefix), so there is no annotation
+    ;; and the string is not the first body form's successor.
     (expect (lpy-test--last-string-face "(def f [x] ^*(a b) \"doc\")")
-            :to-equal 'font-lock-doc-face)
+            :to-equal 'font-lock-string-face)
     (expect (lpy-test--last-string-face "(def f [x] ^**(a b) \"doc\")")
-            :to-equal 'font-lock-doc-face)
+            :to-equal 'font-lock-string-face)
     (expect (lpy-test--last-string-face "(def f [x] ^*'(a b) \"doc\")")
+            :to-equal 'font-lock-string-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^* \"doc\")")
+            :to-equal 'font-lock-string-face))
+
+  (it "detects a docstring after a starred symbol return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^*Ts \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^**P \"doc\")")
             :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a meta chain a triple-quoted string interrupts"
+    (expect (lpy-test--last-string-face "(def f [x] ^''''x''' \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^`'''x''' \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
 
   (it "reads a comma after a meta indicator as whitespace"
     (expect (lpy-test--last-string-face "(def f [x] ^',x \"doc\")")
