@@ -383,7 +383,9 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
   "Return the nREPL eval fields locating buffer position POS.
 The fields are `file' (when the buffer visits one), 1-based `line' and
 1-based `column'; the server reports errors at that position."
-  (save-excursion
+  ;; `current-column' counts back only to `point-min', so widen first.
+  (save-restriction
+    (widen)
     (goto-char pos)
     (append (and (buffer-file-name) `((file . ,(buffer-file-name))))
             `((line . ,(line-number-at-pos pos t))

@@ -533,7 +533,7 @@ c]+-])" :indented))
     (setq sent nil)
     (spy-on 'lpy-nrepl--send :and-call-fake (lambda (msg &rest _) (setq sent msg)))
     (spy-on 'buffer-file-name :and-return-value "/tmp/proj/app.lpy"))
-  (after-each (delete-region (point-min) (point-max)))
+  (after-each (widen) (delete-region (point-min) (point-max)))
 
   (cl-flet ((fields () (list (alist-get 'file sent) (alist-get 'line sent)
                              (alist-get 'column sent))))
@@ -571,8 +571,13 @@ c]+-])" :indented))
       (insert "(a)\n(b)\n  (foo)")
       (narrow-to-region 9 (point-max))
       (lpy-nrepl-eval-buffer-contents)
-      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 3))
-      (widen))
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 3 3)))
+
+    (it "reports the real column when the narrowing starts mid-line"
+      (insert "x = 1; (foo)")
+      (narrow-to-region 8 (point-max))
+      (lpy-nrepl-eval-buffer-contents)
+      (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
 
     (it "omits file for a buffer without one"
       (spy-on 'buffer-file-name :and-return-value nil)
