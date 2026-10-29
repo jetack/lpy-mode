@@ -449,10 +449,24 @@ c]+-])" :indented))
     (expect "(undefined x y «s:\"bar\"»)" :faces))
 
   (it "detects a docstring after a return annotation"
-    (expect "(«k:def» «f:f» [x] ^float «d:\"doc\"»)" :faces))
+    (expect (lpy-test--last-string-face "(def f [x] ^float \"doc\")")
+            :to-equal 'font-lock-doc-face))
 
   (it "detects a docstring after a compound return annotation"
-    (expect "(«k:def» «f:f» [x] «b:^»(«k:sub» «b:list» «b:int») «d:\"doc\"»)" :faces))
+    (expect (lpy-test--last-string-face "(def f [x] ^(sub list int) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a glued return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^list[int] \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^Callable[[int] str] \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "treats a lone ^ as a body form, not an annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^\"Foo\" \"doc\")")
+            :to-equal 'font-lock-string-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^ int \"doc\")")
+            :to-equal 'font-lock-string-face))
 
   (it "detects a docstring after glued type parameters on a def"
     (expect "(«k:def» «f:f»[T] [x] «d:\"doc\"»)" :faces))
