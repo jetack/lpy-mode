@@ -286,7 +286,7 @@
   "Lpy class keywords.")
 
 (defconst lpy-font-lock--symbol-token-rx
-  (rx (1+ (not (any space "()[]{}\",;"))))
+  (rx (1+ (not (any " \t\n\r\f" "()[]{}\",;"))))
   "A Lispython symbol token, dotted names like `functools.cache' included.
 
 Mirrors the symbol pattern of the tokenizer (`_TOKEN_PATTERNS' in
@@ -305,22 +305,25 @@ Point is inside the `[...]' of decorators or at the `(...)' of a single
 call decorator.  A decorator is a name or a call; only the name, or the
 call's head, is matched - never the call's arguments.  Point ends past
 the whole decorator so the next call resumes at its sibling."
+  ;; Every call either moves point forward or returns nil: font-lock
+  ;; calls an anchored matcher again for as long as it returns non-nil
+  ;; with point before LIMIT, so a match that leaves point in place
+  ;; (an unbalanced call whose `forward-sexp' fails) hangs Emacs.
   (let (found)
-    (ignore-errors
-      (while (and (not found)
-                  (progn (forward-comment (buffer-size)) (< (point) limit))
-                  (not (eq (char-syntax (char-after)) ?\))))
-        (let ((start (point)))
-          (cond
-           ((eq (char-after) ?\()
-            (forward-char)
-            (forward-comment (buffer-size))
-            (when (looking-at lpy-font-lock--symbol-token-rx)
-              (setq found (match-data))))
-           ((looking-at lpy-font-lock--symbol-token-rx)
-            (setq found (match-data))))
-          (goto-char start)
-          (forward-sexp))))
+    (while (and (not found)
+                (progn (forward-comment (buffer-size)) (< (point) limit))
+                (not (eq (char-syntax (char-after)) ?\))))
+      (cond
+       ((eq (char-after) ?\()
+        (save-excursion
+          (forward-char)
+          (forward-comment (buffer-size))
+          (when (looking-at lpy-font-lock--symbol-token-rx)
+            (setq found (match-data)))))
+       ((looking-at lpy-font-lock--symbol-token-rx)
+        (setq found (match-data))))
+      (unless (ignore-errors (forward-sexp) t)
+        (goto-char limit)))
     (if found
         (progn (set-match-data found) t)
       (goto-char limit)
@@ -510,6 +513,15 @@ plain symbol `^', so it is itself the first body form."
               (not (memq next '(?\" ?, ?\) ?\] ?\})))
               (not (memq (char-syntax next) '(?\s ?>)))))))
 
+(defun lpy-font-lock--skip-token-filler ()
+  "Skip what Lispython's tokenizer drops between tokens.
+
+That is whitespace, newlines, comments and commas; a comma is
+whitespace to Lispython except right after `(' or `{'."
+  (while (progn (forward-comment (buffer-size))
+                (eq (char-after) ?,))
+    (forward-char)))
+
 (defun lpy-font-lock--skip-annotation ()
   "Move past the return annotation that starts at point.
 
@@ -521,6 +533,9 @@ continues a symbol over expression-prefix characters, so a scan from
 just before that list.  The tokenizer reads `^', up to two `*', then
 a chain of meta indicators (quote, backquote, `~@', `~') each followed
 by a non-space, then a bracketed form, a string or a symbol token.
+The form a meta indicator wraps is the next token, past any comma or
+comment, so `^\\=',x' wraps `x' and a string on the line after
+`^\\=';c' is the annotation, not the docstring.
 A prefix that ends in symbol characters runs on into the symbol
 token, which stops at whitespace, a closing delimiter, a comma, a
 string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
@@ -532,6 +547,7 @@ string or a `[' - so `^\\=' x' and `^* \"x\"' are the bare symbols
                 (let ((next (char-after (match-end 0))))
                   (and next (not (memq (char-syntax next) '(?\s ?>))))))
       (goto-char (match-end 0))
+      (lpy-font-lock--skip-token-filler)
       (setq in-symbol nil)
       (when (looking-at "\\*\\{1,2\\}")
         (goto-char (match-end 0))
