@@ -147,6 +147,10 @@
   '("def" "async-def" "defmacro")
   "Names in Lpy that define functions, macros, etc.")
 
+(defconst lpy-font-lock--docstring-forms
+  (append lpy-font-lock--definitions '("class"))
+  "Forms whose first string after the signature is a docstring.")
+
 ;;;; Operators
 
 (defconst lpy-font-lock--operators
@@ -421,18 +425,67 @@
   "Is string SYNTAX specifically a module docstring?"
   (= 1 (lpy--syntax->string-start syntax)))
 
+(defun lpy-font-lock--skip-glued-bracket ()
+  "Skip a `[' glued to the symbol before point, as in `f[T]' or `^list[int]'.
+
+Lispython's parser glues a bracket that starts exactly where a symbol
+ends into one form with it, so `[T]' is not a separate sexp there.  A
+bracket after a closing delimiter or whitespace is a form of its own."
+  (when (and (eq (char-after) ?\[)
+             (memq (char-syntax (char-before)) '(?w ?_)))
+    (forward-sexp)))
+
+(defun lpy-font-lock--annotation-at-point? ()
+  "Does a return annotation start at point?
+
+Mirror Lispython's tokenizer: `^' makes an annotation only when the
+annotated form follows it directly - `^int', `^(sub list int)',
+`^[...]', `^{...}', `^\\='x'.  A `^' followed by whitespace, a comma
+\(whitespace to Lispython), a string or a closing delimiter is the
+plain symbol `^', so it is itself the first body form."
+  (and (eq (char-after) ?^)
+       (let ((next (char-after (1+ (point)))))
+         (and next
+              (not (memq next '(?\" ?, ?\) ?\] ?\})))
+              (not (memq (char-syntax next) '(?\s ?>)))))))
+
+(defun lpy-font-lock--first-body-form-start (head)
+  "Return the start of the first body form of the HEAD form after point.
+
+Point is just inside the form's opening paren.  Return nil when the
+form ends before a body form.
+
+The body does not sit at a fixed sexp index, so the signature is
+walked piece by piece:
+- type parameters glued to the name, `f[T]', scan as a second sexp;
+- `def', `async-def' and `defmacro' (which expands to `def') take an
+  optional return annotation before the body.  `^(sub list int)' scans
+  as the symbol `^' followed by a list, and `^list[int]' as a symbol
+  followed by a glued bracket.  `class' takes none: the compiler only
+  strips a leading annotation from function bodies."
+  (ignore-errors
+    (forward-sexp 2)                    ; head and name
+    (lpy-font-lock--skip-glued-bracket) ; type parameters
+    (forward-sexp)                      ; arguments or bases
+    (forward-comment (buffer-size))
+    (when (and (member head lpy-font-lock--definitions)
+               (lpy-font-lock--annotation-at-point?))
+      (forward-sexp)
+      (when (eq (char-before) ?^)       ; `^' before a list or quote
+        (forward-sexp))
+      (lpy-font-lock--skip-glued-bracket)
+      (forward-comment (buffer-size)))
+    (unless (eq (char-syntax (char-after)) ?\))
+      (point))))
+
 (defun lpy-font-lock--string-is-function-docstring? (syntax)
   "Is string SYNTAX specifically a function docstring?"
   (-when-let (inner-symbol (lpy--syntax->inner-symbol syntax))
-    (when (and (not (s-equals? "defmethod" inner-symbol))
-               (s-matches? (rx "def" (not blank)) inner-symbol))
-      (let ((start-point (point)))
-        (save-excursion
-          (lpy--goto-inner-sexp syntax)
-
-          (-when-let* ((start (ignore-errors (scan-sexps (point) 3)))
-                       (end (ignore-errors (scan-sexps (point) 4))))
-            (<= start start-point end)))))))
+    (when (member inner-symbol lpy-font-lock--docstring-forms)
+      (save-excursion
+        (lpy--goto-inner-sexp syntax)
+        (eql (lpy-font-lock--first-body-form-start inner-symbol)
+             (lpy--syntax->string-start syntax))))))
 
 ;;;; Exposes
 

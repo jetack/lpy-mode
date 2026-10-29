@@ -111,6 +111,20 @@ If no name is given, then process-based tests will be skipped.")
              `(nil . ,(format "Faceup for %s failed" text)))
       (advice-remove 'lpy-mode 'rainbow-delimiters-mode-disable))))
 
+(defun lpy-test--last-string-face (text)
+  "Return the face `lpy-mode' gives the last string literal in TEXT.
+
+For specs about docstring detection alone: faceup markup must spell
+out every face in the text, so it would also pin unrelated keyword
+faces of the surrounding signature."
+  (with-temp-buffer
+    (lpy-mode)
+    (insert text)
+    (font-lock-ensure)
+    (goto-char (point-max))
+    (search-backward "\"")
+    (get-text-property (1- (point)) 'face)))
+
 ;; Tests `inferior-lpy-font-lock-kwds'. These keywords are relatively advanced
 ;; as they do additional checks based on comint variables.
 (buttercup-define-matcher :shell-faces (text)

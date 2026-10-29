@@ -313,14 +313,13 @@ c]+-])" :indented))
 
 (describe "Font Lock face application"
   (it "to builtins"
-    (expect "«b:+» «b:map» «b:ap-each» map-foo map-do map.foo" :faces))
+    (expect "«b:+» «b:map» map-foo map-do map.foo" :faces))
 
   (it "to constants"
     (expect "«c:True» Truex xTrue" :faces))
 
-  ;; FIXME
-  (xit "to function defs"
-    (expect "«k:defn» «f:func» defnx func xdefn func" :faces))
+  (it "to function defs"
+    (expect "(«k:def» «f:func» []) (defx func) (xdef func)" :faces))
 
   (it "to exceptions"
     (expect "«t:ValueError» ValueErrorx xValueError" :faces))
@@ -329,13 +328,10 @@ c]+-])" :indented))
     (expect "«k:->» «k:for» forx xfor for.x x.for" :faces))
 
   (it "to class definitions"
-    (expect "«k:defclass» «t:Klass» [parent]" :faces))
+    (expect "(«k:class» «t:Klass» [parent])" :faces))
 
-  (it "to tag macro decorator"
-    (expect "«t:#@(a-dec» func-def)" :faces))
-
-  (it "to with decorator"
-    (expect "(«t:with-decorator a-dec» func-def)" :faces))
+  (it "to deco decorator"
+    (expect "(«t:deco a-dec» («k:def» «f:func-def» []))" :faces))
 
   (it "to imports"
     (expect "(«k:import» x [y «k::as» z])" :faces))
@@ -350,7 +346,7 @@ c]+-])" :indented))
     (expect "«f:#tag-x» y" :faces))
 
   (it "to variables"
-    (expect "(«b:setv» «v:foo»)" :faces))
+    (expect "(«b:=» «v:foo» 1)" :faces))
 
   (it "to #% anon funcs"
     (let ((lpy-font-lock-highlight-percent-args? t))
@@ -440,11 +436,46 @@ c]+-])" :indented))
     (expect " «s:\"foo\"»" :faces))
 
   (it "strings identify parent form"
-    (expect "(«k:defn» «f:foo» [] «d:\"bar\"»)" :faces)
-    (expect "(«k:defn» «f:foo» [] [«s:\"bar\"»])" :faces))
+    (expect "(«k:def» «f:foo» [] «d:\"bar\"»)" :faces)
+    (expect "(«k:def» «f:foo» [] [«s:\"bar\"»])" :faces))
 
-  (it "has only first string of a defn as the docstring"
-    (expect "(«k:defn» «f:foo» [] «d:\"bar\"» «s:\"baz\"»)" :faces)))
+  (it "detects async-def docstrings"
+    (expect "(«k:async-def» «f:foo» [] «d:\"bar\"»)" :faces))
+
+  (it "detects class docstrings"
+    (expect "(«k:class» «t:Klass» [] «d:\"doc\"»)" :faces))
+
+  (it "ignores calls to symbols merely containing def"
+    (expect "(undefined x y «s:\"bar\"»)" :faces))
+
+  (it "detects a docstring after a return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^float \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a compound return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^(sub list int) \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "detects a docstring after a glued return annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^list[int] \"doc\")")
+            :to-equal 'font-lock-doc-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^Callable[[int] str] \"doc\")")
+            :to-equal 'font-lock-doc-face))
+
+  (it "treats a lone ^ as a body form, not an annotation"
+    (expect (lpy-test--last-string-face "(def f [x] ^\"Foo\" \"doc\")")
+            :to-equal 'font-lock-string-face)
+    (expect (lpy-test--last-string-face "(def f [x] ^ int \"doc\")")
+            :to-equal 'font-lock-string-face))
+
+  (it "detects a docstring after glued type parameters on a def"
+    (expect "(«k:def» «f:f»[T] [x] «d:\"doc\"»)" :faces))
+
+  (it "detects a docstring after glued type parameters on a class"
+    (expect "(«k:class» «t:K»[T] [Base] «d:\"doc\"»)" :faces))
+
+  (it "has only first string of a def as the docstring"
+    (expect "(«k:def» «f:foo» [] «d:\"bar\"» «s:\"baz\"»)" :faces)))
 
 ;;; Form Captures
 
