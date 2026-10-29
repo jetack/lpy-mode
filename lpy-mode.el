@@ -48,6 +48,11 @@
 (require 'lpy-shell)
 (require 'lpy-nrepl)
 
+(declare-function sp-local-pair "smartparens")
+
+;; Dynamically bound by `calculate-lisp-indent'.
+(defvar calculate-lisp-indent-last-sexp)
+
 ;;; Configuration
 ;;;; Indentation
 
@@ -351,9 +356,6 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
 (define-key lpy-mode-map (kbd "C-M-x") #'lpy-nrepl-eval-current-form-or-shell)
 (define-key lpy-mode-map (kbd "C-c C-m") #'lpy-nrepl-macroexpand)
 
-(define-key lpy-mode-map (kbd "C-c C-d d") #'lpy-describe-thing-at-point)
-(define-key lpy-mode-map (kbd "C-c C-d C-d") #'lpy-describe-thing-at-point)
-
 ;;;; Misc
 
 ;;;###autoload
@@ -376,8 +378,6 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
     ["Load File (C-c C-k)" lpy-nrepl-eval-buffer-or-shell]
     "---"
     ["Macroexpand (C-c C-m)" lpy-nrepl-macroexpand]
-    ["Describe Symbol (C-c C-d d)" lpy-describe-thing-at-point]
-    "---"
     ["Show REPL (C-c C-z)" lpy-nrepl-switch-to-repl]
     ["Start nREPL Server" lpy-nrepl-start]
     ["Connect to nREPL" lpy-nrepl-connect]

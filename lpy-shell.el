@@ -30,9 +30,13 @@
 
 ;;; Code:
 
+(require 'comint)
 (require 'lpy-base)
 
 (require 'lpy-font-lock)
+
+(declare-function xterm-color-filter "xterm-color")
+(declare-function lpy-syntax-propertize-function "lpy-mode")
 
 ;;; Configuration
 ;;;; Configured
@@ -221,15 +225,13 @@ Expected to be called within a Lpy interpreter process buffer."
 (defun lpy-shell--send (text)
   "Send TEXT to Lpy interpreter, starting up if needed."
   (lpy-shell--with
-    (let ((lpy-shell--output-in-progress t)
-          (proc (lpy-shell--current-process)))
+    (let ((proc (lpy-shell--current-process)))
       (comint-send-string proc text))))
 
 (defun lpy-shell--send-internal (text)
   "Send TEXT to Lpy interpreter, starting up if needed."
   (lpy-shell--with-internal
-    (let ((lpy-shell--output-in-progress t)
-          (proc (lpy-shell--current-process)))
+    (let ((proc (lpy-shell--current-process)))
       (comint-send-string proc text))))
 
 ;;;; Macros

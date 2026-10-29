@@ -396,8 +396,8 @@
 
 (defun lpy-font-lock--search-comment-macro (limit)
   "Search for a comment forward stopping at LIMIT."
-  (-when-let* ((_ (re-search-forward lpy-font-lock--tag-comment-prefix-rx limit t))
-               (md (match-data))
+  (-when-let* ((md (and (re-search-forward lpy-font-lock--tag-comment-prefix-rx limit t)
+                         (match-data)))
                (start (match-beginning 1))
                (state (syntax-ppss start)))
     (if (lpy--in-string-or-comment? state)
