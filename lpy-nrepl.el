@@ -161,7 +161,9 @@ reports its own deletion, which must not drop its successor."
      ((and (eq proc lpy-nrepl--connection)
            (string-match-p "\\(deleted\\|connection broken\\|failed\\)" event-trimmed))
       (message "lpy-nrepl: disconnected (%s)" event-trimmed)
-      (setq lpy-nrepl--connection nil)))))
+      ;; Swap rather than just clearing the variable: a remote-closed process
+      ;; stays in `process-list' until deleted, and its callbacks never fire.
+      (lpy-nrepl--swap-connection nil)))))
 
 (defun lpy-nrepl--handle-response (msg)
   "Dispatch a parsed JSON response MSG to the appropriate callback."
