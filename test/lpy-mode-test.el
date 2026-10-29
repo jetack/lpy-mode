@@ -579,6 +579,12 @@ c]+-])" :indented))
       (lpy-nrepl-eval-buffer-contents)
       (expect (fields) :to-equal '("/tmp/proj/app.lpy" 1 8)))
 
+    (it "leaves point where it was"
+      (insert "x = 1\n  (foo bar)")
+      (let ((here (point)))
+        (lpy-nrepl-eval-last-sexp)
+        (expect (point) :to-equal here)))
+
     (it "omits file for a buffer without one"
       (spy-on 'buffer-file-name :and-return-value nil)
       (insert "(foo)")
