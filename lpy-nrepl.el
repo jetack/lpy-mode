@@ -379,6 +379,11 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 
 ;;; Eval Commands
 
+(defun lpy-nrepl--file-fields ()
+  "Return the nREPL `file' field for the current buffer, or nil.
+The server answers a request naming a file from that file's scope."
+  (and (buffer-file-name) `((file . ,(buffer-file-name)))))
+
 (defun lpy-nrepl--position-fields (pos)
   "Return the nREPL eval fields locating buffer position POS.
 The fields are `file' (when the buffer visits one), 1-based `line' and
@@ -390,7 +395,7 @@ The fields are `file' (when the buffer visits one), 1-based `line' and
     (save-restriction
       (widen)
       (goto-char pos)
-      (append (and (buffer-file-name) `((file . ,(buffer-file-name))))
+      (append (lpy-nrepl--file-fields)
               `((line . ,(line-number-at-pos pos t))
                 (column . ,(1+ (- pos (line-beginning-position)))))))))
 
@@ -459,12 +464,14 @@ Sends the buffer text directly as an eval operation."
 ;;;###autoload
 (defun lpy-nrepl-macroexpand ()
   "Macroexpand the form at point via nREPL.
-The expansion is displayed in a `*lpy-macroexpand*' buffer."
+The expansion is displayed in a `*lpy-macroexpand*' buffer and is
+resolved in the buffer file's scope (the session scope without a file)."
   (interactive)
   (-when-let (code (or (lpy--current-form-string)
                        (lpy--last-sexp-string)))
     (lpy-nrepl--send
-     `((op . "macroexpand") (code . ,(string-trim code)))
+     `((op . "macroexpand") (code . ,(string-trim code))
+       ,@(lpy-nrepl--file-fields))
      #'lpy-nrepl--display-macroexpand-result)))
 
 (defun lpy-nrepl--display-macroexpand-result (response)
@@ -521,13 +528,16 @@ The expansion is displayed in a `*lpy-macroexpand*' buffer."
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
-annotated with the kind the server reports for them."
+annotated with the kind the server reports for them.  Candidates come
+from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
            (start (save-excursion
                     (skip-chars-backward "a-zA-Z0-9_\\-.*")
                     (point)))
            (prefix (buffer-substring-no-properties start end))
+           ;; Computed here: the table may run in another buffer.
+           (file-fields (lpy-nrepl--file-fields))
            (kinds nil))
       (when (> (length prefix) 0)
         (list start end
@@ -536,7 +546,7 @@ annotated with the kind the server reports for them."
                  (let ((result nil)
                        (done nil))
                    (lpy-nrepl--send
-                    `((op . "complete") (prefix . ,prefix))
+                    `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
                       (setq result (append (alist-get 'completions response) nil))
                       (setq kinds (alist-get 'kinds response))
@@ -559,7 +569,8 @@ annotated with the kind the server reports for them."
 
 (defun lpy-nrepl-eldoc-function (callback &rest _ignored)
   "Eldoc function that queries nREPL for documentation.
-Calls CALLBACK with the docs string when available."
+Calls CALLBACK with the docs string when available.  The symbol is
+looked up in the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let ((symbol (or (thing-at-point 'symbol t)
                       (save-excursion
@@ -567,7 +578,7 @@ Calls CALLBACK with the docs string when available."
                         (thing-at-point 'symbol t)))))
       (when (and symbol (> (length symbol) 0))
         (lpy-nrepl--send
-         `((op . "docs") (symbol . ,symbol))
+         `((op . "docs") (symbol . ,symbol) ,@(lpy-nrepl--file-fields))
          (lambda (response)
            (let ((docs (alist-get 'docs response)))
              (when docs

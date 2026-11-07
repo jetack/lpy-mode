@@ -312,6 +312,65 @@ test log buffer are cleaned up afterwards."
       (should (= (point) (point-max)))
       (should (string-suffix-p "3\n" (buffer-string))))))
 
+;;; Request file field
+
+(defmacro lpy-nrepl-test--with-sent (file &rest body)
+  "Run BODY in a temp buffer visiting FILE (nil: none); return the sent messages.
+The stubbed send records each message and answers it with a canned response."
+  (declare (indent 1))
+  `(let ((sent nil))
+     (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+               ((symbol-function 'lpy-nrepl--send)
+                (lambda (msg &optional callback)
+                  (push msg sent)
+                  (when callback
+                    (funcall callback '((completions . []) (docs . "d")
+                                        (expansion . "x"))))))
+               ((symbol-function 'lpy-nrepl--display-macroexpand-result)
+                #'ignore)
+               ((symbol-function 'lpy--current-form-string)
+                (lambda () "(foo bar)")))
+       (with-temp-buffer
+         (insert "(foo bar)")
+         (goto-char (+ (point-min) 2))
+         (when ,file (setq buffer-file-name ,file))
+         ,@body))
+     (nreverse sent)))
+
+(defun lpy-nrepl-test--file-of (msgs op)
+  "Return the `file' entry of the MSGS message for OP."
+  (let ((msg (cl-find op msgs :key (lambda (m) (alist-get 'op m)) :test #'equal)))
+    (should msg)
+    (assq 'file msg)))
+
+(ert-deftest lpy-nrepl-test-complete-sends-file ()
+  (let ((msgs (lpy-nrepl-test--with-sent "/tmp/a.lpy"
+                ;; The table runs in a buffer with no file, like a minibuffer.
+                (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
+                  (with-temp-buffer (all-completions "fo" table))))))
+    (should (equal (lpy-nrepl-test--file-of msgs "complete")
+                   '(file . "/tmp/a.lpy")))))
+
+(ert-deftest lpy-nrepl-test-docs-sends-file ()
+  (let ((msgs (lpy-nrepl-test--with-sent "/tmp/a.lpy"
+                (lpy-nrepl-eldoc-function #'ignore))))
+    (should (equal (lpy-nrepl-test--file-of msgs "docs")
+                   '(file . "/tmp/a.lpy")))))
+
+(ert-deftest lpy-nrepl-test-macroexpand-sends-file ()
+  (let ((msgs (lpy-nrepl-test--with-sent "/tmp/a.lpy"
+                (lpy-nrepl-macroexpand))))
+    (should (equal (lpy-nrepl-test--file-of msgs "macroexpand")
+                   '(file . "/tmp/a.lpy")))))
+
+(ert-deftest lpy-nrepl-test-no-file-buffer-sends-no-file ()
+  (let ((msgs (lpy-nrepl-test--with-sent nil
+                (all-completions "fo" (nth 2 (lpy-nrepl-completion-at-point)))
+                (lpy-nrepl-eldoc-function #'ignore)
+                (lpy-nrepl-macroexpand))))
+    (should (= (length msgs) 3))
+    (dolist (m msgs) (should-not (assq 'file m)))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
