@@ -896,6 +896,20 @@ private.  pyrefly sends it up front."
                                         :company-docsig))
                      nconc (list key value)))))))
 
+(defun lpy--lsp-syntax-table ()
+  "Return the buffer's syntax table with `.' as punctuation.
+eglot takes the completion bounds from `bounds-of-thing-at-point' on a
+symbol, and an LSP server completes the word after the last dot, with a
+text edit covering only that word.  Under the Lisp-derived mode table `.'
+is a symbol constituent, so the bounds would be `heapq.nl' and no
+candidate would match.  Only the eglot call uses this table: the mode
+table keeps `.' as a symbol character because sexp motion, font-lock and
+the nREPL's dotted names depend on it.  (The nREPL result for a dotted
+prefix starts earlier, so `lpy--merge-capf-results' drops it.)"
+  (let ((table (copy-syntax-table (syntax-table))))
+    (modify-syntax-entry ?. "." table)
+    table))
+
 (defun lpy-completion-at-point ()
   "Completion-at-point function for `lpy-mode' buffers.
 Merges the candidates of `eglot-completion-at-point', when eglot manages
@@ -909,7 +923,8 @@ sources available."
   (lpy--merge-capf-results
    (lpy--shorten-eglot-capf
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
-         (eglot-completion-at-point)))
+         (with-syntax-table (lpy--lsp-syntax-table)
+           (eglot-completion-at-point))))
    (lpy-nrepl-completion-at-point)))
 
 ;;; Eldoc (nREPL-backed)

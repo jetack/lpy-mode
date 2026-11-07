@@ -795,6 +795,70 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
     (should (eq (car completion-at-point-functions) #'lpy-completion-at-point))
     (should (memq #'eglot-completion-at-point completion-at-point-functions))))
 
+(defun lpy-nrepl-test--assert-dotted-bounds (result)
+  "Assert RESULT's bounds cover only the `nl' after the dot in the buffer."
+  (let* ((start (nth 0 result))
+         (end (nth 1 result))
+         (text (buffer-substring-no-properties start end)))
+    (should (= start (1+ (save-excursion (goto-char (point-max))
+                                         (search-backward ".")))))
+    (should (equal text "nl"))
+    (should (member "nlargest" (all-completions text (nth 2 result))))))
+
+(ert-deftest lpy-nrepl-test-capf-dotted-bounds-stub ()
+  ;; Defect: eglot takes symbol bounds, and `.' is a symbol character in
+  ;; `lpy-mode-syntax-table', so `heapq.nl' becomes the prefix and the
+  ;; server's candidates (edit range `nl') never match.
+  (require 'lpy-mode)
+  (with-temp-buffer
+    (lpy-mode)
+    (insert "(import heapq)\nheapq.nl")
+    (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+              ((symbol-function 'eglot-completion-at-point)
+               (lambda ()
+                 (let ((b (or (bounds-of-thing-at-point 'symbol)
+                              (cons (point) (point)))))
+                   (list (car b) (cdr b) (list "nlargest" "nsmallest")))))
+              ((symbol-function 'lpy-nrepl-completion-at-point) (lambda () nil)))
+      (lpy-nrepl-test--assert-dotted-bounds (lpy-completion-at-point))
+      ;; The mode table is untouched: sexp motion needs dotted symbols.
+      (should (eq (char-syntax ?.) ?_)))))
+
+(ert-deftest lpy-nrepl-test-capf-dotted-bounds-live ()
+  ;; Same defect against real eglot and the real lispython server.
+  (let ((python (getenv "LPY_TEST_LSP_PYTHON")))
+    (skip-unless (and python (file-executable-p python)))
+    (require 'eglot)
+    (require 'lpy-mode)
+    (let* ((dir (file-name-as-directory (make-temp-file "lpy-lsp-" t)))
+           (file (expand-file-name "t.lpy" dir))
+           (eglot-server-programs
+            `((lpy-mode . (,python "-m" "lispy.lsp"))))
+           (project-find-functions
+            (list (lambda (_) (cons 'transient dir))))
+           (eglot-sync-connect 60)
+           (buf nil))
+      (with-temp-file file (insert "(import heapq)\nheapq.nl"))
+      (unwind-protect
+          (progn
+            (setq buf (find-file-noselect file))
+            (with-current-buffer buf
+              (apply #'eglot (eglot--guess-contact))
+              (let ((deadline (+ (float-time) 30)))
+                (while (and (not (eglot-managed-p))
+                            (< (float-time) deadline))
+                  (accept-process-output nil 0.1)))
+              (should (eglot-managed-p))
+              (goto-char (point-max))
+              (lpy-nrepl-test--assert-dotted-bounds (lpy-completion-at-point))))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf
+            (ignore-errors (when (eglot-managed-p)
+                             (eglot-shutdown (eglot-current-server))))
+            (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-directory dir t)))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
