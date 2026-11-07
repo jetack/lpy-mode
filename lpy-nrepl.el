@@ -270,9 +270,11 @@ connection, so it must no longer see the old process as current."
     (setq lpy-nrepl--pending-callbacks nil)
     ;; A replaced or dropped server's file scopes may be gone, and string
     ;; evals would silently run in an empty one; the log records the reset.
+    ;; Quiet: the caller's own message (e.g. the sentinel's disconnect reason)
+    ;; must stay in the echo area.
     ;; A scope chosen while disconnected (OLD nil) is kept for the first connect.
     (when (and old lpy-nrepl--scope)
-      (lpy-nrepl--set-scope nil "connection changed"))
+      (lpy-nrepl--set-scope nil "connection changed" t))
     (when old
       (delete-process old))))
 
@@ -416,15 +418,17 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 
 ;;; Eval Commands
 
-(defun lpy-nrepl--set-scope (path &optional reason)
+(defun lpy-nrepl--set-scope (path &optional reason quiet)
   "Set the eval scope to file PATH (nil: `__main__'), log and announce it.
-REASON, a string, is appended in parentheses to the log line."
+REASON, a string, is appended in parentheses to the log line.  QUIET skips
+the echo-area message (the log still records it)."
   (setq lpy-nrepl--scope path)
   (let ((text (format "scope: %s%s" (lpy-nrepl--scope-label t)
                       (if reason (format " (%s)" reason) ""))))
     (lpy-nrepl--log "scope" (concat ";; " text))
     (force-mode-line-update t)
-    (message "lpy-nrepl %s" text)))
+    (unless quiet
+      (message "lpy-nrepl %s" text))))
 
 (defun lpy-nrepl--scope-candidates ()
   "Return an alist (DISPLAY . PATH) of file-visiting `lpy-mode' buffers."

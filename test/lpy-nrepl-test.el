@@ -467,6 +467,34 @@ buffer without a file; bind `lpy-file' to the first one's exact path."
         (should (string-suffix-p ";; scope: __main__ (connection changed)\n"
                                  (buffer-string)))))))
 
+(ert-deftest lpy-nrepl-test-sentinel-drop-resets-scope-keeps-reason ()
+  ;; The scope reset is pinned on the drop path (not only on connect), and its
+  ;; announcement must not replace the disconnect reason in the echo area.
+  (lpy-nrepl-test--with-servers (srv)
+    (let ((lpy-nrepl--scope nil))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+      (setq lpy-nrepl--scope "/tmp/a.lpy")
+      (setq lpy-nrepl-test--messages nil)
+      (lpy-nrepl--process-sentinel lpy-nrepl--connection
+                                   "connection broken by remote peer\n")
+      (should-not lpy-nrepl--scope)
+      (should (string-match-p "disconnected (connection broken"
+                              (car lpy-nrepl-test--messages)))
+      (with-current-buffer (lpy-nrepl--repl-buffer)
+        (should (string-suffix-p ";; scope: __main__ (connection changed)\n"
+                                 (buffer-string)))))))
+
+(ert-deftest lpy-nrepl-test-disconnect-resets-scope ()
+  (lpy-nrepl-test--with-servers (srv)
+    (let ((lpy-nrepl--scope nil))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+      (setq lpy-nrepl--scope "/tmp/a.lpy")
+      (setq lpy-nrepl-test--messages nil)
+      (lpy-nrepl-disconnect)
+      (should-not lpy-nrepl--scope)
+      (should (equal (car lpy-nrepl-test--messages)
+                     "lpy-nrepl: disconnected")))))
+
 (ert-deftest lpy-nrepl-test-first-connect-keeps-scope ()
   (lpy-nrepl-test--with-servers (srv)
     (let ((lpy-nrepl--scope "/tmp/a.lpy"))
