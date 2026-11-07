@@ -34,6 +34,7 @@
 
 (require 'lpy-base)
 (require 'json)
+(require 'subr-x)
 
 (declare-function run-lpy "lpy-shell" ())
 (declare-function lpy-shell-eval-current-form "lpy-shell" ())
@@ -594,25 +595,64 @@ resolved in the buffer file's scope (the session scope without a file)."
     "Stub for backward compatibility. Use `lpy-nrepl-completion-at-point' instead."
     nil))
 
-(defconst lpy-nrepl--kind-annotations
-  '(("class" . " class")
-    ("function" . " fn")
-    ("variable" . " var")
-    ("macro" . " macro")
-    ("keyword" . " kw"))
-  "Annotation text for each completion kind the nREPL `complete' op returns.")
+(defconst lpy--completion-kinds
+  '((text " text" text)
+    (method " method" method)
+    (function " function" function)
+    (constructor " constructor" constructor)
+    (field " field" field)
+    (variable " variable" variable)
+    (class " class" class)
+    (interface " interface" interface)
+    (module " module" module)
+    (property " property" property)
+    (unit " unit" unit)
+    (value " value" value)
+    (enum " enum" enum)
+    (keyword " keyword" keyword)
+    (snippet " snippet" snippet)
+    (color " color" color)
+    (file " file" file)
+    (reference " reference" reference)
+    (folder " folder" folder)
+    (enum-member " enum member" enum-member)
+    (constant " constant" constant)
+    (struct " struct" struct)
+    (event " event" event)
+    (operator " operator" operator)
+    (type-parameter " type parameter" type-parameter)
+    (macro " macro" function))
+  "Each completion kind as (KIND ANNOTATION COMPANY-KIND).
+The one vocabulary of candidate annotations: nREPL candidates (whose
+kind names are the KIND symbols) and LSP candidates (through
+`lpy--lsp-kinds') both resolve through it.  Annotations are the full
+lowercase kind word, as JupyterLab, elpy and nvim-cmp show it.")
 
-(defconst lpy-nrepl--company-kinds
-  '(("class" . class)
-    ("function" . function)
-    ("variable" . variable)
-    ("macro" . function)
-    ("keyword" . keyword))
-  "Company kind symbol for each nREPL completion kind.")
+(defconst lpy--lsp-kinds
+  (let ((kinds (make-hash-table)))
+    (cl-loop for kind in '(text method function constructor field variable
+                           class interface module property unit value enum
+                           keyword snippet color file reference folder
+                           enum-member constant struct event operator
+                           type-parameter)
+             for number from 1
+             do (puthash number kind kinds))
+    kinds)
+  "The `lpy--completion-kinds' kind of each LSP CompletionItemKind number.")
 
-(defun lpy-nrepl--kind-annotation (kind)
-  "Return the annotation string for completion KIND, or nil when unknown."
-  (cdr (assoc kind lpy-nrepl--kind-annotations)))
+(defun lpy--kind-annotation (kind)
+  "Return the annotation for KIND, a `lpy--completion-kinds' symbol."
+  (nth 1 (assq kind lpy--completion-kinds)))
+
+(defun lpy-nrepl--kind (name)
+  "Return the kind symbol of NAME, a kind the nREPL `complete' op returns.
+Nil when NAME is no known kind."
+  (and (stringp name)
+       (car (assq (intern-soft name) lpy--completion-kinds))))
+
+(defun lpy-nrepl--kind-annotation (name)
+  "Return the annotation for nREPL kind NAME, or nil when unknown."
+  (lpy--kind-annotation (lpy-nrepl--kind name)))
 
 (defun lpy-nrepl--kinds-lookup (kinds candidate)
   "Return the kind of CANDIDATE in KINDS, the alist from a complete response."
@@ -657,8 +697,9 @@ from the buffer file's scope (the session scope without a file)."
                  (lpy-nrepl--kinds-lookup kinds candidate)))
               :company-kind
               (lambda (candidate)
-                (cdr (assoc (lpy-nrepl--kinds-lookup kinds candidate)
-                            lpy-nrepl--company-kinds)))
+                (nth 2 (assq (lpy-nrepl--kind
+                              (lpy-nrepl--kinds-lookup kinds candidate))
+                             lpy--completion-kinds)))
               :exclusive 'no)))))
 
 ;;;; Merged completion (LSP + nREPL)
@@ -769,16 +810,106 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
                                    (when fn (apply fn cand args))))))))
           `(,beg ,(max main-end extra-end) ,table ,@plist)))))))
 
+(defun lpy--eglot-item (cand)
+  "Return the LSP CompletionItem plist eglot attached to CAND, or nil.
+`eglot--lsp-item' is eglot's internal text property; the tests pin it."
+  (and (stringp cand) (> (length cand) 0)
+       (get-text-property 0 'eglot--lsp-item cand)))
+
+(defun lpy--lsp-signature (item)
+  "Return the trimmed `detail' of LSP completion ITEM, or nil when empty."
+  (let ((detail (plist-get item :detail)))
+    (when (stringp detail)
+      (let ((sig (string-trim detail)))
+        (unless (string-empty-p sig) sig)))))
+
+(defun lpy--lsp-annotation (item)
+  "Return the list annotation of LSP completion ITEM.
+`labelDetails.description' when the server sends one, else the kind's
+word.  Never `detail': backends such as pyrefly put a whole multi-line
+overload set there, which LSP means for the focused item only."
+  (let ((desc (plist-get (plist-get item :labelDetails) :description)))
+    (if (and (stringp desc) (not (string-empty-p desc)))
+        (concat " " desc)
+      (lpy--kind-annotation (gethash (plist-get item :kind) lpy--lsp-kinds)))))
+
+(defun lpy--docsig-line (sig)
+  "Return signature SIG as one echo-area line.
+Decorator lines (pyrefly heads an overload set with `@overload') are
+dropped, so the line starts at the first `def'."
+  (string-join (split-string
+                (mapconcat #'identity
+                           (cl-remove-if (lambda (line)
+                                           (string-prefix-p "@" (string-trim-left line)))
+                                         (split-string sig "\n"))
+                           " "))
+               " "))
+
+(defun lpy--signature-doc-buffer (sig docs)
+  "Return a doc buffer showing SIG above DOCS, a buffer, (BUFFER . POS) or nil."
+  (let* ((docs-buffer (if (consp docs) (car docs) docs))
+         (text (and (buffer-live-p docs-buffer)
+                    (with-current-buffer docs-buffer (buffer-string)))))
+    (with-current-buffer (get-buffer-create " *lpy doc*")
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize sig 'face 'font-lock-function-name-face))
+        (when (and text (not (string-empty-p (string-trim text))))
+          (insert "\n\n" text)))
+      (current-buffer))))
+
+(defun lpy--shorten-eglot-capf (result)
+  "Return eglot capf RESULT with kind-word annotations, signature in docs.
+Each candidate is annotated by `lpy--lsp-annotation'; its signature (the
+item's `detail') heads the `:company-doc-buffer' popup and is the
+`:company-docsig' line (`lpy--docsig-line'), as CIDER shows the arglist
+outside the list.  The signature is read from the item as first sent: a
+server that sends `detail' only on completionItem/resolve (pyright) gets
+eglot's docs and docsig unchanged, since eglot keeps the resolved item
+private.  pyrefly sends it up front."
+  (pcase-let ((`(,beg ,end ,table . ,plist) result))
+    (when result
+      (let ((annotate (plist-get plist :annotation-function))
+            (doc-buffer (plist-get plist :company-doc-buffer))
+            (docsig (plist-get plist :company-docsig)))
+        `(,beg ,end ,table
+          :annotation-function
+          ,(lambda (cand)
+             (let ((item (lpy--eglot-item cand)))
+               (if item
+                   (lpy--lsp-annotation item)
+                 (and annotate (funcall annotate cand)))))
+          :company-doc-buffer
+          ,(lambda (cand)
+             (let ((sig (lpy--lsp-signature (lpy--eglot-item cand)))
+                   (docs (and doc-buffer (funcall doc-buffer cand))))
+               (if sig (lpy--signature-doc-buffer sig docs) docs)))
+          :company-docsig
+          ,(lambda (cand)
+             (let ((sig (lpy--lsp-signature (lpy--eglot-item cand))))
+               (if sig
+                   (lpy--docsig-line sig)
+                 (and docsig (funcall docsig cand)))))
+          ,@(cl-loop for (key value) on plist by #'cddr
+                     unless (memq key '(:annotation-function
+                                        :company-doc-buffer
+                                        :company-docsig))
+                     nconc (list key value)))))))
+
 (defun lpy-completion-at-point ()
   "Completion-at-point function for `lpy-mode' buffers.
 Merges the candidates of `eglot-completion-at-point', when eglot manages
 the buffer, with those of `lpy-nrepl-completion-at-point', when an nREPL
-is connected.  A name both offer appears once, with eglot's annotation,
-docs and exit function; names only the nREPL knows keep its annotation
-and kind.  Works with neither, either or both sources available."
+is connected.  A name both offer appears once, with eglot's docs and exit
+function; names only the nREPL knows keep its annotation and kind.  Both
+sources are annotated with the kind's word (`lpy--completion-kinds');
+an LSP candidate's signature goes to the doc popup and the docsig line
+\(`lpy--shorten-eglot-capf').  Works with neither, either or both
+sources available."
   (lpy--merge-capf-results
-   (and (fboundp 'eglot-managed-p) (eglot-managed-p)
-        (eglot-completion-at-point))
+   (lpy--shorten-eglot-capf
+    (and (fboundp 'eglot-managed-p) (eglot-managed-p)
+         (eglot-completion-at-point)))
    (lpy-nrepl-completion-at-point)))
 
 ;;; Eldoc (nREPL-backed)
