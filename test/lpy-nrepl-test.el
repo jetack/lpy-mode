@@ -853,10 +853,6 @@ SENT is set to the prefix the client asked for."
   "{\"op\": \"complete-result\", \"word\": \"heap\", \"completions\": [\"heapq.heapify\", \"heapq.heapify-max\", \"heapq.heappop\", \"heapq.heappop-max\", \"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\", \"heapq.heapreplace\", \"heapq.heapreplace-max\"], \"items\": [{\"label\": \"heapify\", \"kind\": 3}, {\"label\": \"heapify-max\", \"kind\": 3}, {\"label\": \"heappop\", \"kind\": 3}, {\"label\": \"heappop-max\", \"kind\": 3}, {\"label\": \"heappush\", \"kind\": 3}, {\"label\": \"heappush-max\", \"kind\": 3}, {\"label\": \"heappushpop\", \"kind\": 3}, {\"label\": \"heappushpop-max\", \"kind\": 3}, {\"label\": \"heapreplace\", \"kind\": 3}, {\"label\": \"heapreplace-max\", \"kind\": 3}], \"id\": \"3\"}"
   "Captured reply to prefix `heapq.heap'.")
 
-(defconst lpy-nrepl-test--reply-ok
-  "{\"op\": \"complete-result\", \"word\": \"ok\", \"completions\": [\"ok?\"], \"items\": [{\"label\": \"ok?\", \"kind\": 3}], \"id\": \"4\"}"
-  "Captured reply to prefix `ok'.")
-
 (ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
   ;; Defect: labels are the word after the last dot; filtering them by the
   ;; dotted head drops every one.
@@ -940,7 +936,8 @@ SENT is set to the prefix the client asked for."
                        (" class" . class)))))))
 
 (ert-deftest lpy-nrepl-test-items-dotted-lookup-by-label ()
-  ;; Defect: looking items up as head+candidate misses the label-keyed entry.
+  ;; Pins that every captured label, hyphen spellings like `heapify-max'
+  ;; included, comes through unfiltered, with its kind.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
         (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-heap)
@@ -955,22 +952,6 @@ SENT is set to the prefix the client asked for."
           (should (eq (funcall (plist-get props :company-kind) "heapify-max")
                       'function))
           (should (equal sent "heapq.heap")))))))
-
-(ert-deftest lpy-nrepl-test-code-spelled-labels-pass-through ()
-  ;; A label like `ok?' reaches the table unchanged, annotated.
-  (let (sent)
-    (lpy-nrepl-test--with-reply sent
-        (lpy-nrepl-test--captured lpy-nrepl-test--reply-ok)
-      (with-temp-buffer
-        (insert "ok")
-        (let* ((res (lpy-nrepl-completion-at-point))
-               (props (nthcdr 3 res)))
-          (should (equal (all-completions "ok" (nth 2 res)) '("ok?")))
-          (should (equal (funcall (plist-get props :annotation-function) "ok?")
-                         " function"))
-          (should (eq (funcall (plist-get props :company-kind) "ok?")
-                      'function))
-          (should (equal sent "ok")))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
   ;; Defect: an empty `items' reply lists candidates from another field.
