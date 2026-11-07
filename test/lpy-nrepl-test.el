@@ -928,6 +928,95 @@ SENT is set to the prefix the client asked for."
             (should (member "nlargest" names))
             (should (member "nlx_runtime" names))))))))
 
+(defmacro lpy-nrepl-test--with-reply (sent reply &rest body)
+  "Run BODY with an nREPL whose `complete' reply is the alist REPLY.
+SENT is set to the prefix the client asked for."
+  (declare (indent 2))
+  `(cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+             ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
+             ((symbol-function 'lpy-nrepl--send)
+              (lambda (msg &optional callback)
+                (setq ,sent (alist-get 'prefix msg))
+                (funcall callback ,reply))))
+     ,@body))
+
+(defun lpy-nrepl-test--item (label kind &optional description)
+  "Return a parsed `items' entry, as `json-parse-string' yields it."
+  `((label . ,label) (kind . ,kind)
+    ,@(when description `((labelDetails . ((description . ,description)))))))
+
+(defun lpy-nrepl-test--annotations (text &rest names)
+  "Complete TEXT in a temp buffer; return (ANNOTATION . COMPANY-KIND) per NAMES."
+  (with-temp-buffer
+    (insert text)
+    (let* ((res (lpy-nrepl-completion-at-point))
+           (props (nthcdr 3 res)))
+      (all-completions "" (nth 2 res)) ; the fetch happens on the first table call
+      (mapcar (lambda (n)
+                (cons (funcall (plist-get props :annotation-function) n)
+                      (funcall (plist-get props :company-kind) n)))
+              names))))
+
+(ert-deftest lpy-nrepl-test-items-annotate-and-kind ()
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "defmacro" 14 "special form")
+                    ,(lpy-nrepl-test--item "defn" 3 "macro")
+                    ,(lpy-nrepl-test--item "deque" 7)]))
+      (should (equal (lpy-nrepl-test--annotations "de" "defmacro" "defn" "deque")
+                     '((" special form" . keyword)
+                       (" macro" . function)
+                       (" class" . class)))))))
+
+(ert-deftest lpy-nrepl-test-items-dotted-lookup-by-full-name ()
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)]))
+      (with-temp-buffer
+        (insert "heapq.n")
+        (let* ((res (lpy-nrepl-completion-at-point))
+               (props (nthcdr 3 res)))
+          (should (equal (all-completions "n" (nth 2 res)) '("nlargest")))
+          (should (equal (funcall (plist-get props :annotation-function)
+                                  "nlargest")
+                         " function"))
+          (should (equal sent "heapq.n")))))))
+
+(ert-deftest lpy-nrepl-test-items-empty-means-no-candidates ()
+  ;; Defect: an empty `items' treated as absent falls back to `completions'.
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        '((items . []) (completions . ["foo"]) (kinds . ((foo . "function"))))
+      (with-temp-buffer
+        (insert "fo")
+        (should-not (all-completions "fo" (nth 2 (lpy-nrepl-completion-at-point))))))))
+
+(ert-deftest lpy-nrepl-test-kinds-fallback-without-items ()
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        '((completions . ["foo"]) (kinds . ((foo . "function"))))
+      (should (equal (lpy-nrepl-test--annotations "fo" "foo")
+                     '((" function" . function)))))))
+
+(ert-deftest lpy-nrepl-test-items-win-over-kinds ()
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "foo" 7)])
+          (completions . ["foo"]) (kinds . ((foo . "function"))))
+      (should (equal (lpy-nrepl-test--annotations "fo" "foo")
+                     '((" class" . class)))))))
+
+(ert-deftest lpy-nrepl-test-nrepl-and-eglot-items-annotate-alike ()
+  ;; Defect: the two sources diverging on how one kind is shown.
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "m" 3 "macro")
+                    ,(lpy-nrepl-test--item "c" 7)]))
+      (should (equal (mapcar #'car (lpy-nrepl-test--annotations "m" "m" "c"))
+                     (list (lpy--lsp-annotation
+                            '(:kind 3 :labelDetails (:description "macro")))
+                           (lpy--lsp-annotation '(:kind 7))))))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here

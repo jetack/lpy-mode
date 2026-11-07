@@ -623,10 +623,11 @@ resolved in the buffer file's scope (the session scope without a file)."
     (type-parameter " type parameter" type-parameter)
     (macro " macro" function))
   "Each completion kind as (KIND ANNOTATION COMPANY-KIND).
-The one vocabulary of candidate annotations: nREPL candidates (whose
-kind names are the KIND symbols) and LSP candidates (through
-`lpy--lsp-kinds') both resolve through it.  Annotations are the full
-lowercase kind word, as JupyterLab, elpy and nvim-cmp show it.")
+The one vocabulary of candidate annotations: nREPL and LSP candidates
+resolve their kind number through `lpy--lsp-kinds' (older servers send
+KIND names, the symbols here) and then through this table.
+Annotations are the full lowercase kind word, as JupyterLab, elpy and
+nvim-cmp show it.")
 
 (defconst lpy--lsp-kinds
   (let ((kinds (make-hash-table)))
@@ -643,6 +644,19 @@ lowercase kind word, as JupyterLab, elpy and nvim-cmp show it.")
 (defun lpy--kind-annotation (kind)
   "Return the annotation for KIND, a `lpy--completion-kinds' symbol."
   (nth 1 (assq kind lpy--completion-kinds)))
+
+(defun lpy--item-annotation (description kind-number)
+  "Return the list annotation of a completion item.
+DESCRIPTION (`labelDetails.description') when a non-empty string, else
+the word of KIND-NUMBER, an LSP CompletionItemKind.  The one annotation
+rule of eglot and nREPL candidates, so one kind displays identically."
+  (if (and (stringp description) (not (string-empty-p description)))
+      (concat " " description)
+    (lpy--kind-annotation (gethash kind-number lpy--lsp-kinds))))
+
+(defun lpy--item-company-kind (kind-number)
+  "Return the `:company-kind' of KIND-NUMBER, an LSP CompletionItemKind."
+  (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
 (defun lpy-nrepl--kind (name)
   "Return the kind symbol of NAME, a kind the nREPL `complete' op returns.
@@ -661,7 +675,8 @@ Nil when NAME is no known kind."
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
-annotated with the kind the server reports for them.  Candidates come
+annotated from the LSP-shaped `items' the server reports (kind and
+`labelDetails'), as eglot candidates are.  Candidates come
 from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
@@ -681,6 +696,8 @@ from the buffer file's scope (the session scope without a file)."
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
            (kinds nil)
+           (items nil)                  ; label -> (KIND-NUMBER . DESCRIPTION)
+           (items-p nil)
            (result nil)
            (fetched nil))
       (when (> (length prefix) 0)
@@ -693,8 +710,26 @@ from the buffer file's scope (the session scope without a file)."
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
-                      (setq result (append (alist-get 'completions response) nil))
-                      (setq kinds (alist-get 'kinds response))
+                      ;; `assq': an empty `items' means no candidates, not
+                      ;; "fall back".  The `completions'/`kinds' fallback is
+                      ;; transitional: a later cleanup removes it once
+                      ;; lispython ships `items'.
+                      (if (setq items-p (assq 'items response))
+                          (progn
+                            (setq items (make-hash-table :test #'equal))
+                            (setq result nil)
+                            (mapc (lambda (item)
+                                    (let ((label (alist-get 'label item)))
+                                      (push label result)
+                                      (puthash label
+                                               (cons (alist-get 'kind item)
+                                                     (alist-get 'description
+                                                                (alist-get 'labelDetails item)))
+                                               items)))
+                                  (cdr items-p))
+                            (setq result (nreverse result)))
+                        (setq result (append (alist-get 'completions response) nil))
+                        (setq kinds (alist-get 'kinds response)))
                       (setq fetched t)))
                    (with-timeout (1 nil)
                      (while (not fetched)
@@ -704,14 +739,20 @@ from the buffer file's scope (the session scope without a file)."
                           collect (substring name (length head)))))
               :annotation-function
               (lambda (candidate)
-                (lpy-nrepl--kind-annotation
-                 (lpy-nrepl--kinds-lookup kinds (concat head candidate))))
+                (let ((name (concat head candidate)))
+                  (if items-p
+                      (let ((item (gethash name items)))
+                        (lpy--item-annotation (cdr item) (car item)))
+                    (lpy-nrepl--kind-annotation
+                     (lpy-nrepl--kinds-lookup kinds name)))))
               :company-kind
               (lambda (candidate)
-                (nth 2 (assq (lpy-nrepl--kind
-                              (lpy-nrepl--kinds-lookup
-                               kinds (concat head candidate)))
-                             lpy--completion-kinds)))
+                (let ((name (concat head candidate)))
+                  (if items-p
+                      (lpy--item-company-kind (car (gethash name items)))
+                    (nth 2 (assq (lpy-nrepl--kind
+                                  (lpy-nrepl--kinds-lookup kinds name))
+                                 lpy--completion-kinds)))))
               :exclusive 'no)))))
 
 ;;;; Merged completion (LSP + nREPL)
@@ -837,13 +878,11 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
 
 (defun lpy--lsp-annotation (item)
   "Return the list annotation of LSP completion ITEM.
-`labelDetails.description' when the server sends one, else the kind's
-word.  Never `detail': backends such as pyrefly put a whole multi-line
+Never `detail': backends such as pyrefly put a whole multi-line
 overload set there, which LSP means for the focused item only."
-  (let ((desc (plist-get (plist-get item :labelDetails) :description)))
-    (if (and (stringp desc) (not (string-empty-p desc)))
-        (concat " " desc)
-      (lpy--kind-annotation (gethash (plist-get item :kind) lpy--lsp-kinds)))))
+  (lpy--item-annotation
+   (plist-get (plist-get item :labelDetails) :description)
+   (plist-get item :kind)))
 
 (defun lpy--docsig-line (sig)
   "Return signature SIG as one echo-area line.
