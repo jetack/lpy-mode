@@ -840,60 +840,72 @@ SENT is set to the prefix the client asked for."
                 (funcall callback ,reply))))
      ,@body))
 
+(defun lpy-nrepl-test--captured (json)
+  "Parse JSON, a reply captured from the nREPL, as the client does."
+  (json-parse-string json :object-type 'alist :null-object nil
+                     :false-object nil))
+
+(defconst lpy-nrepl-test--reply-heapq-nl
+  "{\"op\": \"complete-result\", \"word\": \"nl\", \"completions\": [\"heapq.nlargest\"], \"items\": [{\"label\": \"nlargest\", \"kind\": 3}], \"id\": \"2\"}"
+  "Captured reply to prefix `heapq.nl'.")
+
+(defconst lpy-nrepl-test--reply-heapq-heap
+  "{\"op\": \"complete-result\", \"word\": \"heap\", \"completions\": [\"heapq.heapify\", \"heapq.heapify-max\", \"heapq.heappop\", \"heapq.heappop-max\", \"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\", \"heapq.heapreplace\", \"heapq.heapreplace-max\"], \"items\": [{\"label\": \"heapify\", \"kind\": 3}, {\"label\": \"heapify-max\", \"kind\": 3}, {\"label\": \"heappop\", \"kind\": 3}, {\"label\": \"heappop-max\", \"kind\": 3}, {\"label\": \"heappush\", \"kind\": 3}, {\"label\": \"heappush-max\", \"kind\": 3}, {\"label\": \"heappushpop\", \"kind\": 3}, {\"label\": \"heappushpop-max\", \"kind\": 3}, {\"label\": \"heapreplace\", \"kind\": 3}, {\"label\": \"heapreplace-max\", \"kind\": 3}], \"id\": \"3\"}"
+  "Captured reply to prefix `heapq.heap'.")
+
 (ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
-  ;; Defect: the nREPL candidates start at the whole dotted symbol, so they
-  ;; cannot line up with LSP's start and the merge drops them.
+  ;; Defect: labels are the word after the last dot; filtering them by the
+  ;; dotted head drops every one.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)
-                    ,(lpy-nrepl-test--item "heapq.nsmallest" 2)]))
+        (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-nl)
       (with-temp-buffer
-        (insert "(import heapq)\nheapq.n")
+        (insert "(import heapq)\nheapq.nl")
         (let* ((res (lpy-nrepl-completion-at-point))
                (table (nth 2 res))
                (annotate (plist-get (nthcdr 3 res) :annotation-function)))
-          (should (= (nth 0 res) (1+ (- (point) 2))))
-          (should (equal (all-completions "n" table)
-                         '("nlargest" "nsmallest")))
+          (should (= (nth 0 res) (- (point) 2)))
+          (should (equal (all-completions "nl" table) '("nlargest")))
           (should (equal (funcall annotate "nlargest") " function"))
           (should (eq (funcall (plist-get (nthcdr 3 res) :company-kind)
                                "nlargest")
                       'function))
-          (should (equal sent "heapq.n")))))))
+          (should (equal sent "heapq.nl")))))))
 
 (ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
   ;; Defect: `heapq.' starts at the whole symbol instead of at point.
+  ;; Asserts only START and the sent prefix, which do not depend on the
+  ;; reply (the `heapq.nl' capture is a stand-in).
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)]))
+        (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-nl)
       (with-temp-buffer
         (insert "heapq.")
         (let ((res (lpy-nrepl-completion-at-point)))
           (should (= (nth 0 res) (point)))
-          (should (equal (all-completions "" (nth 2 res)) '("nlargest")))
+          (all-completions "" (nth 2 res)) ; triggers the fetch
           (should (equal sent "heapq.")))))))
 
 (ert-deftest lpy-nrepl-test-dotted-merge-keeps-nrepl-names ()
-  ;; Defect: with eglot starting after the dot and the nREPL at the whole
-  ;; symbol, the merge drops the nREPL-only names (runtime attributes).
+  ;; Defect: stripping the head from bare labels drops them all, so the
+  ;; nREPL-only name `heapify-max' is lost in the merge.
   (require 'lpy-mode)
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)
-                    ,(lpy-nrepl-test--item "heapq.nlx_runtime" 6)]))
+        (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-heap)
       (with-temp-buffer
         (lpy-mode)
-        (insert "(import heapq)\nheapq.nl")
+        (insert "(import heapq)\nheapq.heap")
         (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
                   ((symbol-function 'eglot-completion-at-point)
                    (lambda ()
                      (let ((b (or (bounds-of-thing-at-point 'symbol)
                                   (cons (point) (point)))))
-                       (list (car b) (cdr b) (list "nlargest"))))))
+                       (list (car b) (cdr b) (list "heapify"))))))
           (let* ((res (lpy-completion-at-point))
-                 (names (all-completions "nl" (nth 2 res))))
-            (should (member "nlargest" names))
-            (should (member "nlx_runtime" names))))))))
+                 (names (all-completions "heap" (nth 2 res))))
+            (should (member "heapify" names))
+            (should (member "heapify-max" names))))))))
 
 (defun lpy-nrepl-test--item (label kind &optional description)
   "Return a parsed `items' entry, as `json-parse-string' yields it."
@@ -923,21 +935,23 @@ SENT is set to the prefix the client asked for."
                        (" macro" . function)
                        (" class" . class)))))))
 
-(ert-deftest lpy-nrepl-test-items-dotted-lookup-by-full-name ()
+(ert-deftest lpy-nrepl-test-items-dotted-lookup-by-label ()
+  ;; Pins that every captured label, hyphen spellings like `heapify-max'
+  ;; included, comes through unfiltered, with its kind.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)]))
+        (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-heap)
       (with-temp-buffer
-        (insert "heapq.n")
+        (insert "heapq.heap")
         (let* ((res (lpy-nrepl-completion-at-point))
                (props (nthcdr 3 res)))
-          (should (equal (all-completions "n" (nth 2 res)) '("nlargest")))
+          (should (= (length (all-completions "heap" (nth 2 res))) 10))
           (should (equal (funcall (plist-get props :annotation-function)
-                                  "nlargest")
+                                  "heapify-max")
                          " function"))
-          (should (eq (funcall (plist-get props :company-kind) "nlargest")
+          (should (eq (funcall (plist-get props :company-kind) "heapify-max")
                       'function))
-          (should (equal sent "heapq.n")))))))
+          (should (equal sent "heapq.heap")))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
   ;; Defect: an empty `items' reply lists candidates from another field.

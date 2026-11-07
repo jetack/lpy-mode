@@ -671,9 +671,10 @@ from the buffer file's scope (the session scope without a file)."
            (prefix (buffer-substring-no-properties symbol-start end))
            ;; Complete the word after the last dot, as LSP does: both
            ;; sources must share the start or `lpy--merge-capf-results'
-           ;; drops one.  The server still gets the full dotted PREFIX
-           ;; and returns full names, so HEAD (through the dot) is
-           ;; stripped from candidates and prepended for item lookups.
+           ;; drops one.  HEAD (through the dot) only places START; the
+           ;; server gets the full dotted PREFIX and replies with labels
+           ;; that are already the word after the last dot, which is the
+           ;; text from START to point.  Candidates are those labels.
            (head (if (string-match "\\(?:.*\\.\\)" prefix)
                      (match-string 0 prefix)
                    ""))
@@ -709,17 +710,15 @@ from the buffer file's scope (the session scope without a file)."
                    (with-timeout (1 nil)
                      (while (not fetched)
                        (accept-process-output lpy-nrepl--connection 0.05))))
-                 (cl-loop for name in result
-                          when (string-prefix-p head name)
-                          collect (substring name (length head)))))
+                 result))
               :annotation-function
               (lambda (candidate)
-                (let ((item (gethash (concat head candidate) items)))
+                (let ((item (gethash candidate items)))
                   (lpy--item-annotation (cdr item) (car item))))
               :company-kind
               (lambda (candidate)
                 (lpy--item-company-kind
-                 (car (gethash (concat head candidate) items))))
+                 (car (gethash candidate items))))
               :exclusive 'no)))))
 
 ;;;; Merged completion (LSP + nREPL)
