@@ -767,7 +767,8 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
           (sig (funcall docsig cand)))
       (should (string-match-p (regexp-quote "def nlargest[_S](") text))
       (should (string-match-p "DOCS" text))
-      (should (string-match-p "def nlargest" sig))
+      ;; The decorator line is no part of the one-line signature.
+      (should (string-prefix-p "def nlargest[_S](" sig))
       (should-not (string-match-p "\n" sig)))))
 
 (ert-deftest lpy-nrepl-test-lsp-without-detail-keeps-eglot-docs ()

@@ -826,12 +826,24 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
 (defun lpy--lsp-annotation (item)
   "Return the list annotation of LSP completion ITEM.
 `labelDetails.description' when the server sends one, else the kind's
-tag.  Never `detail': backends such as pyrefly put a whole multi-line
+word.  Never `detail': backends such as pyrefly put a whole multi-line
 overload set there, which LSP means for the focused item only."
   (let ((desc (plist-get (plist-get item :labelDetails) :description)))
     (if (and (stringp desc) (not (string-empty-p desc)))
         (concat " " desc)
       (lpy--kind-annotation (gethash (plist-get item :kind) lpy--lsp-kinds)))))
+
+(defun lpy--docsig-line (sig)
+  "Return signature SIG as one echo-area line.
+Decorator lines (pyrefly heads an overload set with `@overload') are
+dropped, so the line starts at the first `def'."
+  (string-join (split-string
+                (mapconcat #'identity
+                           (cl-remove-if (lambda (line)
+                                           (string-prefix-p "@" (string-trim-left line)))
+                                         (split-string sig "\n"))
+                           " "))
+               " "))
 
 (defun lpy--signature-doc-buffer (sig docs)
   "Return a doc buffer showing SIG above DOCS, a buffer, (BUFFER . POS) or nil."
@@ -847,10 +859,14 @@ overload set there, which LSP means for the focused item only."
       (current-buffer))))
 
 (defun lpy--shorten-eglot-capf (result)
-  "Return eglot capf RESULT with short annotations and the signature in the docs.
+  "Return eglot capf RESULT with kind-word annotations, signature in docs.
 Each candidate is annotated by `lpy--lsp-annotation'; its signature (the
 item's `detail') heads the `:company-doc-buffer' popup and is the
-`:company-docsig' line, as CIDER shows the arglist outside the list."
+`:company-docsig' line (`lpy--docsig-line'), as CIDER shows the arglist
+outside the list.  The signature is read from the item as first sent: a
+server that sends `detail' only on completionItem/resolve (pyright) gets
+eglot's docs and docsig unchanged, since eglot keeps the resolved item
+private.  pyrefly sends it up front."
   (pcase-let ((`(,beg ,end ,table . ,plist) result))
     (when result
       (let ((annotate (plist-get plist :annotation-function))
@@ -872,7 +888,7 @@ item's `detail') heads the `:company-doc-buffer' popup and is the
           ,(lambda (cand)
              (let ((sig (lpy--lsp-signature (lpy--eglot-item cand))))
                (if sig
-                   (replace-regexp-in-string "[ \t\n]+" " " sig)
+                   (lpy--docsig-line sig)
                  (and docsig (funcall docsig cand)))))
           ,@(cl-loop for (key value) on plist by #'cddr
                      unless (memq key '(:annotation-function
@@ -886,7 +902,7 @@ Merges the candidates of `eglot-completion-at-point', when eglot manages
 the buffer, with those of `lpy-nrepl-completion-at-point', when an nREPL
 is connected.  A name both offer appears once, with eglot's docs and exit
 function; names only the nREPL knows keep its annotation and kind.  Both
-sources are annotated with one short kind tag (`lpy--completion-kinds');
+sources are annotated with the kind's word (`lpy--completion-kinds');
 an LSP candidate's signature goes to the doc popup and the docsig line
 \(`lpy--shorten-eglot-capf').  Works with neither, either or both
 sources available."
