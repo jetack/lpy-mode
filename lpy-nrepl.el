@@ -25,6 +25,10 @@
 ;; Provides eval, load-file, macroexpand, and completion operations that
 ;; integrate with `lpy-mode' keybindings and fall back to the comint shell
 ;; when no nREPL connection is active.
+;;
+;; Buffer evals run in their file's scope.  `lpy-nrepl-set-file-scope' picks
+;; a file whose scope `lpy-nrepl-eval-string' evals in (default: the
+;; session's `__main__'); the choice is client state, shown in the REPL log.
 
 ;;; Code:
 
@@ -82,7 +86,32 @@ Each callback is a function taking one argument: the parsed JSON response.")
 (defconst lpy-nrepl--server-buffer-name "*lpy-nrepl-server*"
   "Buffer name for the nREPL server subprocess output.")
 
+;; The file scope `lpy-nrepl-eval-string' evals in: an absolute file path
+;; (exactly a `buffer-file-name', the string buffer evals send as `file'),
+;; or nil for the session's `__main__'.  Global: there is one REPL session.
+(defvar lpy-nrepl--scope nil
+  "File path whose scope `lpy-nrepl-eval-string' uses, or nil for `__main__'.")
+
+(defconst lpy-nrepl--ns-field 'ns
+  "Name of the nREPL request field selecting a file's scope.
+Unlike `file' it does not rename the eval; the one home of the key.")
+
+(defvar lpy-nrepl--eval-string-history nil
+  "Minibuffer history for `lpy-nrepl-eval-string'.")
+
 ;;; Helpers
+
+(defun lpy-nrepl--ns-fields ()
+  "Return the nREPL scope field for `lpy-nrepl--scope', or nil for `__main__'."
+  (and lpy-nrepl--scope
+       (list (cons lpy-nrepl--ns-field lpy-nrepl--scope))))
+
+(defun lpy-nrepl--scope-label (&optional full)
+  "Return a display string for `lpy-nrepl--scope'.
+With FULL, abbreviate the whole path instead of keeping the file name."
+  (cond ((null lpy-nrepl--scope) "__main__")
+        (full (abbreviate-file-name lpy-nrepl--scope))
+        (t (file-name-nondirectory lpy-nrepl--scope))))
 
 (defun lpy-nrepl--next-id ()
   "Return a fresh string request ID."
@@ -379,6 +408,53 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 
 ;;; Eval Commands
 
+(defun lpy-nrepl--set-scope (path)
+  "Set the eval scope to file PATH (nil: `__main__'), log and announce it."
+  (setq lpy-nrepl--scope path)
+  (let ((text (format "scope: %s" (lpy-nrepl--scope-label t))))
+    (lpy-nrepl--log "scope" (concat ";; " text))
+    (force-mode-line-update t)
+    (message "lpy-nrepl %s" text)))
+
+(defun lpy-nrepl--scope-candidates ()
+  "Return an alist (DISPLAY . PATH) of file-visiting `lpy-mode' buffers."
+  (let (alist)
+    (dolist (buf (buffer-list))
+      (with-current-buffer buf
+        (when (and (derived-mode-p 'lpy-mode) buffer-file-name)
+          (push (cons (abbreviate-file-name buffer-file-name) buffer-file-name)
+                alist))))
+    (nreverse (cl-delete-duplicates alist :key #'car :test #'equal :from-end t))))
+
+;;;###autoload
+(defun lpy-nrepl-set-file-scope ()
+  "Choose the file scope for `lpy-nrepl-eval-string'.
+Pick among the open `lpy-mode' file buffers; empty input selects `__main__'."
+  (interactive)
+  (let* ((alist (lpy-nrepl--scope-candidates))
+         (choice (completing-read "File scope (empty for __main__): "
+                                  alist nil t)))
+    (lpy-nrepl--set-scope
+     (and (not (string-empty-p choice)) (cdr (assoc choice alist))))))
+
+;;;###autoload
+(defun lpy-nrepl-eval-string (code)
+  "Evaluate CODE, read from the minibuffer, in the chosen file scope.
+The result goes to the echo area and REPL log, with no overlay."
+  (interactive
+   (list (read-string (format "Eval in %s: " (lpy-nrepl--scope-label))
+                      nil 'lpy-nrepl--eval-string-history)))
+  (let ((trimmed (string-trim code)))
+    (when (string-empty-p trimmed)
+      (user-error "Nothing to evaluate"))
+    (lpy-nrepl--send
+     `((op . "eval") (code . ,trimmed) ,@(lpy-nrepl--ns-fields))
+     (lambda (response)
+       ;; Not tied to a source buffer: keep an earlier eval's overlay target
+       ;; (buffer-local) from receiving this result.
+       (let ((lpy-nrepl--eval-buffer nil))
+         (lpy-nrepl--display-eval-result response))))))
+
 (defun lpy-nrepl--file-fields ()
   "Return the nREPL `file' field for the current buffer, or nil.
 The server answers a request naming a file from that file's scope."
@@ -646,6 +722,8 @@ Falls back to `run-lpy' comint shell when not connected."
 (defvar lpy-nrepl-repl-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "q") #'quit-window)
+    (define-key map (kbd "C-c M-n") #'lpy-nrepl-set-file-scope)
+    (define-key map (kbd "C-c M-:") #'lpy-nrepl-eval-string)
     map)
   "Keymap for `lpy-nrepl-repl-mode'.")
 
@@ -653,7 +731,9 @@ Falls back to `run-lpy' comint shell when not connected."
   "Major mode for the nREPL interaction log buffer.
 Shows input sent to and output received from the nREPL server."
   (setq-local truncate-lines nil)
-  (setq-local word-wrap t))
+  (setq-local word-wrap t)
+  (setq mode-line-process
+        '(:eval (concat " [" (lpy-nrepl--scope-label) "]"))))
 
 ;;; Provide:
 
