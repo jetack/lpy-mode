@@ -355,6 +355,8 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
 (define-key lpy-mode-map (kbd "C-c C-e") #'lpy-nrepl-eval-last-sexp-or-shell)
 (define-key lpy-mode-map (kbd "C-M-x") #'lpy-nrepl-eval-current-form-or-shell)
 (define-key lpy-mode-map (kbd "C-c C-m") #'lpy-nrepl-macroexpand)
+(define-key lpy-mode-map (kbd "C-c M-n") #'lpy-nrepl-set-file-scope)
+(define-key lpy-mode-map (kbd "C-c M-:") #'lpy-nrepl-eval-string)
 
 ;;;; Misc
 
@@ -378,6 +380,8 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
     ["Load File (C-c C-k)" lpy-nrepl-eval-buffer-or-shell]
     "---"
     ["Macroexpand (C-c C-m)" lpy-nrepl-macroexpand]
+    ["Set File Scope (C-c M-n)" lpy-nrepl-set-file-scope]
+    ["Eval String (C-c M-:)" lpy-nrepl-eval-string]
     "---"
     ["Show REPL (C-c C-z)" lpy-nrepl-switch-to-repl]
     ["Start nREPL Server" lpy-nrepl-start]

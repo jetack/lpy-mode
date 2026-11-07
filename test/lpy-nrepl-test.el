@@ -371,6 +371,148 @@ The stubbed send records each message and answers it with a canned response."
     (should (= (length msgs) 3))
     (dolist (m msgs) (should-not (assq 'file m)))))
 
+;;; File scope
+
+(require 'lpy-mode)
+
+(ert-deftest lpy-nrepl-test-eval-string-sends-scope-as-ns ()
+  (let ((lpy-nrepl--scope "/tmp/a.lpy")
+        (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-evalstr*"))
+    (unwind-protect
+        (let ((msg (car (lpy-nrepl-test--with-sent nil
+                          (lpy-nrepl-eval-string "  (+ 1 2) ")))))
+          (should (equal (alist-get 'code msg) "(+ 1 2)"))
+          ;; Literal key: the server contract.
+          (should (equal (alist-get 'ns msg) "/tmp/a.lpy"))
+          (dolist (k '(file line column)) (should-not (assq k msg))))
+      (when (get-buffer lpy-nrepl--repl-buffer-name)
+        (kill-buffer lpy-nrepl--repl-buffer-name)))))
+
+(ert-deftest lpy-nrepl-test-eval-string-main-scope-sends-no-scope ()
+  ;; Even from a file buffer: the string eval is not the buffer's.
+  (let ((lpy-nrepl--scope nil)
+        (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-evalstr*"))
+    (unwind-protect
+        (let ((msg (car (lpy-nrepl-test--with-sent "/tmp/a.lpy"
+                          (lpy-nrepl-eval-string "x")))))
+          (dolist (k '(ns file line column))
+            (should-not (assq k msg))))
+      (when (get-buffer lpy-nrepl--repl-buffer-name)
+        (kill-buffer lpy-nrepl--repl-buffer-name)))))
+
+(ert-deftest lpy-nrepl-test-eval-string-blank-errors ()
+  (lpy-nrepl-test--with-sent nil
+    (should-error (lpy-nrepl-eval-string "  ") :type 'user-error)))
+
+(defmacro lpy-nrepl-test--with-scope-buffers (&rest body)
+  "Run BODY with an lpy file buffer, a non-lpy file buffer and an lpy
+buffer without a file; bind `lpy-file' to the first one's exact path."
+  `(let ((lpy-file (expand-file-name "scope-a.lpy" temporary-file-directory))
+         (lpy-lib-buf (generate-new-buffer " *lpy-scope-a*"))
+         (txt-buf (generate-new-buffer " *lpy-scope-txt*"))
+         (anon-buf (generate-new-buffer " *lpy-scope-anon*"))
+         (lpy-nrepl--scope nil)
+         (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-scope*"))
+     (unwind-protect
+         (progn
+           (with-current-buffer lpy-lib-buf
+             (lpy-mode) (setq buffer-file-name lpy-file))
+           (with-current-buffer txt-buf
+             (fundamental-mode)
+             (setq buffer-file-name (expand-file-name "scope-b.txt"
+                                                      temporary-file-directory)))
+           (with-current-buffer anon-buf (lpy-mode))
+           ,@body)
+       (dolist (b (list lpy-lib-buf txt-buf anon-buf))
+         (with-current-buffer b (set-buffer-modified-p nil))
+         (kill-buffer b))
+       (when (get-buffer lpy-nrepl--repl-buffer-name)
+         (kill-buffer lpy-nrepl--repl-buffer-name)))))
+
+(ert-deftest lpy-nrepl-test-set-file-scope-picks-exact-path ()
+  (lpy-nrepl-test--with-scope-buffers
+    (let (offered)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt coll &rest _)
+                   (setq offered (mapcar #'car coll))
+                   (car (cadr coll)))))
+        (lpy-nrepl-set-file-scope))
+      (should (equal offered (list "__main__" (abbreviate-file-name lpy-file))))
+      (should (equal lpy-nrepl--scope lpy-file)))))
+
+(ert-deftest lpy-nrepl-test-set-file-scope-empty-resets-to-main ()
+  (lpy-nrepl-test--with-scope-buffers
+    (setq lpy-nrepl--scope lpy-file)
+    (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "")))
+      (lpy-nrepl-set-file-scope))
+    (should-not lpy-nrepl--scope)))
+
+(ert-deftest lpy-nrepl-test-set-file-scope-defaults-to-main ()
+  ;; Vertico preselects candidate 0 without a DEF; RET must mean __main__.
+  (lpy-nrepl-test--with-scope-buffers
+    (let (def)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_p _c _pred _rm _init _hist d) (setq def d) "")))
+        (lpy-nrepl-set-file-scope))
+      (should (equal def "__main__")))))
+
+(ert-deftest lpy-nrepl-test-reconnect-resets-scope-and-logs ()
+  (lpy-nrepl-test--with-servers (srv-a srv-b)
+    (let ((lpy-nrepl--scope nil))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv-a))
+      (setq lpy-nrepl--scope "/tmp/a.lpy")
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv-b))
+      (should-not lpy-nrepl--scope)
+      (with-current-buffer (lpy-nrepl--repl-buffer)
+        (should (string-suffix-p ";; scope: __main__ (connection changed)\n"
+                                 (buffer-string)))))))
+
+(ert-deftest lpy-nrepl-test-first-connect-keeps-scope ()
+  (lpy-nrepl-test--with-servers (srv)
+    (let ((lpy-nrepl--scope "/tmp/a.lpy"))
+      (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+      (should (equal lpy-nrepl--scope "/tmp/a.lpy")))))
+
+(ert-deftest lpy-nrepl-test-mode-line-label-escapes-percent ()
+  (let ((lpy-nrepl--scope "/tmp/50%.lpy")
+        (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-pct*"))
+    (unwind-protect
+        (with-current-buffer (lpy-nrepl--repl-buffer)
+          (should (equal (eval (cadr mode-line-process) t) " [50%%.lpy]")))
+      (kill-buffer lpy-nrepl--repl-buffer-name))))
+
+(ert-deftest lpy-nrepl-test-scope-shown-in-log-and-mode-line ()
+  (lpy-nrepl-test--with-scope-buffers
+    (lpy-nrepl--set-scope lpy-file)
+    (with-current-buffer (lpy-nrepl--repl-buffer)
+      (should (string-match-p (regexp-quote (concat ";; scope: "
+                                                    (abbreviate-file-name lpy-file)))
+                              (buffer-string)))
+      ;; `format-mode-line' returns "" in batch Emacs, so evaluate the
+      ;; (:eval FORM) construct directly.
+      (should (equal (eval (cadr mode-line-process) t) " [scope-a.lpy]")))
+    (lpy-nrepl--set-scope nil)
+    (with-current-buffer (lpy-nrepl--repl-buffer)
+      (should (equal (eval (cadr mode-line-process) t) " [__main__]")))))
+
+(ert-deftest lpy-nrepl-test-eval-string-result-makes-no-overlay ()
+  (lpy-nrepl-test--with-scope-buffers
+    (let ((lpy-nrepl--scope lpy-file)
+          (callback nil))
+      (with-temp-buffer
+        (insert "(foo)")
+        ;; State left behind by an earlier buffer eval.
+        (setq lpy-nrepl--eval-buffer (current-buffer)
+              lpy-nrepl--eval-point (point-min))
+        (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+                  ((symbol-function 'lpy-nrepl--send)
+                   (lambda (_msg &optional cb) (setq callback cb))))
+          (lpy-nrepl-eval-string "(foo)"))
+        (let ((inhibit-message t))
+          (funcall callback '((value . "3"))))
+        (should-not (cl-some (lambda (ov) (overlay-get ov 'lpy-nrepl))
+                             (overlays-in (point-min) (point-max))))))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
