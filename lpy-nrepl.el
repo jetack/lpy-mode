@@ -660,7 +660,7 @@ rule of eglot and nREPL candidates, so one kind displays identically."
   (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
 (defun lpy-nrepl--kind (name)
-  "Return the kind symbol of NAME, a kind the nREPL `complete' op returns.
+  "Return the kind symbol of NAME, a name in the fallback `kinds' field.
 Nil when NAME is no known kind."
   (and (stringp name)
        (car (assq (intern-soft name) lpy--completion-kinds))))
@@ -711,9 +711,9 @@ from the buffer file's scope (the session scope without a file)."
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
-                      ;; Presence is tested on the raw vector, before any list
-                      ;; conversion: (append [] nil) is nil, and an empty
-                      ;; `items' means no candidates, not "fall back".  The
+                      ;; The `items' KEY is tested (`assq') before any list
+                      ;; conversion, so an empty [] (or null) means no
+                      ;; candidates, not "fall back".  The
                       ;; `completions'/`kinds' fallback is transitional,
                       ;; removed by TASK-1130.
                       (if (setq items-p (assq 'items response))

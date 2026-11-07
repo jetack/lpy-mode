@@ -20,7 +20,7 @@
 (require 'lpy-nrepl)
 
 (ert-deftest lpy-nrepl-test-kind-annotation ()
-  ;; Defect: a kind the nREPL `complete' op returns gets no annotation.
+  ;; Defect: a name from the fallback `kinds' field gets no annotation.
   (dolist (kind '("class" "function" "variable" "macro" "keyword"))
     (should (lpy-nrepl--kind-annotation kind)))
   (should-not (lpy-nrepl--kind-annotation "mystery"))
@@ -966,6 +966,8 @@ SENT is set to the prefix the client asked for."
           (should (equal (funcall (plist-get props :annotation-function)
                                   "nlargest")
                          " function"))
+          (should (eq (funcall (plist-get props :company-kind) "nlargest")
+                      'function))
           (should (equal sent "heapq.n")))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
