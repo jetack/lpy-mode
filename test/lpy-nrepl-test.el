@@ -48,8 +48,10 @@
   ;; the same kind of name under two tags.
   (dolist (case '((3 . "function") (7 . "class") (6 . "variable")
                   (14 . "keyword")))
-    (should (equal (lpy--kind-annotation (alist-get (car case) lpy--lsp-kinds))
-                   (lpy-nrepl--kind-annotation (cdr case))))))
+    (let ((tag (lpy-nrepl--kind-annotation (cdr case))))
+      (should tag)
+      (should (equal (lpy--kind-annotation (alist-get (car case) lpy--lsp-kinds))
+                     tag)))))
 
 (defmacro lpy-nrepl-test--with-project (port-text &rest body)
   "Run BODY in a temp project/sub dir; write PORT-TEXT to root's port file."

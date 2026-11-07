@@ -625,7 +625,7 @@ kind names are the KIND symbols) and LSP candidates (through
   "Return the kind symbol of NAME, a kind the nREPL `complete' op returns.
 Nil when NAME is no known kind."
   (and (stringp name)
-       (car (assq (intern name) lpy--completion-kinds))))
+       (car (assq (intern-soft name) lpy--completion-kinds))))
 
 (defun lpy-nrepl--kind-annotation (name)
   "Return the annotation for nREPL kind NAME, or nil when unknown."
