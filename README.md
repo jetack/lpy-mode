@@ -18,7 +18,7 @@ An Emacs major mode for [LisPython](https://github.com/jetack/lispython).
   - `C-c M-:` eval a string from the minibuffer in that scope
   - `C-c C-z` start nREPL server / show REPL buffer
   - `M-x lpy-nrepl-connect-project` connect via the project's `.nrepl-port` (also the default port for `lpy-nrepl-connect`)
-  - Completion via `completion-at-point` (works with corfu, company, default), annotated with the server's kind (class/fn/var/macro/kw); when eglot manages the buffer, its LSP candidates are merged in (one list, duplicates shown once with eglot's docs), so no `cape-capf-super` is needed
+  - Completion via `completion-at-point` (works with corfu, company, default), annotated with a short kind tag (class/fn/var/macro/kw); when eglot manages the buffer, its LSP candidates are merged in (one list, duplicates shown once with eglot's docs), so no `cape-capf-super` is needed. LSP candidates get the same short tags (or the server's `labelDetails.description`); their signature goes to the doc popup (e.g. `corfu-popupinfo`) and the echo-area docsig, not the list
   - Eldoc integration (signature display in minibuffer)
 - Comint shell fallback when nREPL is not connected
 

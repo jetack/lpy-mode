@@ -43,9 +43,13 @@
                     (lpy-nrepl--kinds-lookup kinds "os.path"))
                    " var"))))
 
-(ert-deftest lpy-nrepl-test-company-kinds-cover-annotations ()
-  (dolist (entry lpy-nrepl--kind-annotations)
-    (should (assoc (car entry) lpy-nrepl--company-kinds))))
+(ert-deftest lpy-nrepl-test-lsp-and-nrepl-kinds-share-tags ()
+  ;; Defect: the LSP and nREPL kind vocabularies drift, so one list shows
+  ;; the same kind of name under two tags.
+  (dolist (case '((3 . "function") (7 . "class") (6 . "variable")
+                  (14 . "keyword")))
+    (should (equal (lpy--kind-annotation (alist-get (car case) lpy--lsp-kinds))
+                   (lpy-nrepl--kind-annotation (cdr case))))))
 
 (defmacro lpy-nrepl-test--with-project (port-text &rest body)
   "Run BODY in a temp project/sub dir; write PORT-TEXT to root's port file."
@@ -569,7 +573,8 @@ buffer without a file; bind `lpy-file' to the first one's exact path."
 Its table matches flexibly, like eglot's: \"theap\" matches \"hea\"."
   (let* ((end (point))
          (beg (save-excursion (skip-chars-backward "a-z") (point)))
-         (cands (list (propertize "heapify" 'eglot--lsp-item '(:label "heapify"))
+         (cands (list (propertize "heapify" 'eglot--lsp-item
+                                  '(:label "heapify" :kind 3))
                       (propertize "heap" 'eglot--lsp-item '(:label "heap"))
                       (propertize "theap" 'eglot--lsp-item '(:label "theap")))))
     (list beg end
@@ -634,7 +639,7 @@ EGLOT and NREPL are forms giving each stub's result."
       (let ((heapify (lpy-nrepl-test--find "heapify" cands)))
         (should (get-text-property 0 'eglot--lsp-item heapify))
         (should (equal (funcall (plist-get plist :annotation-function) heapify)
-                       " [sig]"))
+                       " fn"))
         (funcall (plist-get plist :exit-function) heapify 'finished)
         (funcall (plist-get plist :company-doc-buffer) heapify)
         (should (equal lpy-nrepl-test--calls
@@ -690,9 +695,82 @@ EGLOT and NREPL are forms giving each stub's result."
       (cl-letf (((symbol-function 'eglot-managed-p) #'ignore))
         (should (eq (lpy-completion-at-point) nrepl))))
     (lpy-nrepl-test--with-capfs eglot nil
-      (should (eq (lpy-completion-at-point) eglot)))
+      ;; eglot alone keeps its table; only the annotations are shortened.
+      (let ((result (lpy-completion-at-point)))
+        (should (eq (nth 2 result) (nth 2 eglot)))
+        (should (eq (plist-get (nthcdr 3 result) :exit-function)
+                    (plist-get (nthcdr 3 eglot) :exit-function)))))
     (lpy-nrepl-test--with-capfs nil nil
       (should-not (lpy-completion-at-point)))))
+
+(defconst lpy-nrepl-test--pyrefly-nlargest
+  '(:label "nlargest" :kind 3 :labelDetails nil
+    :detail "\n@overload\ndef nlargest[_S](\n    n: int,\n    iterable: Iterable[_S],\n    key: (_S) -> SupportsRichComparison\n) -> list[_S]: ...\ndef nlargest[SupportsRichComparisonT: SupportsRichComparison](\n    n       : int,\n    iterable: Iterable[SupportsRichComparisonT],\n    key     : None = None\n) -> list[SupportsRichComparisonT]: ...")
+  "pyrefly 1.4.1's completion item for `heapq.nl', as captured.")
+
+(defun lpy-nrepl-test--eglot-item-capf (item)
+  "Stub of `eglot-completion-at-point' offering one candidate carrying ITEM.
+eglot's own annotation returns `detail', its doc buffer holds \"DOCS\"."
+  (let ((cand (propertize (plist-get item :label) 'eglot--lsp-item item)))
+    (list (- (point) 2) (point) (list cand)
+          :annotation-function (lambda (c)
+                                 (concat " " (plist-get (lpy--eglot-item c)
+                                                        :detail)))
+          :company-doc-buffer (lambda (_c)
+                                (with-current-buffer
+                                    (get-buffer-create " *lpy-test eglot doc*")
+                                  (erase-buffer)
+                                  (insert "Return the n largest elements. DOCS")
+                                  (current-buffer)))
+          :company-docsig (lambda (_c) "eglot docsig"))))
+
+(defmacro lpy-nrepl-test--with-item (item &rest body)
+  "Run BODY with CAND, ANNOTATE, DOC-BUFFER and DOCSIG bound for ITEM.
+The capf result is `lpy-completion-at-point''s over an eglot stub."
+  (declare (indent 1))
+  `(lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-item-capf ,item) nil
+     (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))
+                  (cand (car (all-completions "" table)))
+                  (annotate (plist-get plist :annotation-function))
+                  (doc-buffer (plist-get plist :company-doc-buffer))
+                  (docsig (plist-get plist :company-docsig)))
+       (ignore cand annotate doc-buffer docsig)
+       ,@body)))
+
+(ert-deftest lpy-nrepl-test-lsp-annotation-is-kind-not-detail ()
+  ;; Defect: the item's multi-line `detail' (the whole overload set) is
+  ;; shown beside the candidate, as eglot's own annotation does.
+  (lpy-nrepl-test--with-item lpy-nrepl-test--pyrefly-nlargest
+    (should (equal (funcall annotate cand) " fn"))))
+
+(ert-deftest lpy-nrepl-test-lsp-annotation-prefers-label-description ()
+  ;; Defect: a server's own short tag (labelDetails.description) is
+  ;; replaced by the generic kind tag.
+  (lpy-nrepl-test--with-item '(:label "defn" :kind 14 :detail "special form"
+                               :labelDetails (:description "special form"))
+    (should (equal (funcall annotate cand) " special form"))))
+
+(ert-deftest lpy-nrepl-test-lsp-signature-goes-to-docs ()
+  ;; Defect: once `detail' leaves the list, the signature is shown nowhere:
+  ;; the doc popup must carry it above eglot's docs, and the docsig line
+  ;; must be one line.
+  (lpy-nrepl-test--with-item lpy-nrepl-test--pyrefly-nlargest
+    (let ((text (with-current-buffer (funcall doc-buffer cand)
+                  (buffer-string)))
+          (sig (funcall docsig cand)))
+      (should (string-match-p (regexp-quote "def nlargest[_S](") text))
+      (should (string-match-p "DOCS" text))
+      (should (string-match-p "def nlargest" sig))
+      (should-not (string-match-p "\n" sig)))))
+
+(ert-deftest lpy-nrepl-test-lsp-without-detail-keeps-eglot-docs ()
+  ;; Defect: an item without a signature loses eglot's own docs or docsig.
+  (lpy-nrepl-test--with-item '(:label "nl" :kind 6)
+    (should (equal (funcall annotate cand) " var"))
+    (should (equal (with-current-buffer (funcall doc-buffer cand)
+                     (buffer-string))
+                   "Return the n largest elements. DOCS"))
+    (should (equal (funcall docsig cand) "eglot docsig"))))
 
 (ert-deftest lpy-nrepl-test-merged-capf-different-starts-keep-main ()
   ;; Defect: candidates completing different prefixes are mixed.
