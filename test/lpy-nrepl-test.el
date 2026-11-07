@@ -793,6 +793,39 @@ call's state (ORIG-POS, BOUNDS-STRING), then applies the edit."
                                   my-only)
                          " nrepl")))))))
 
+(ert-deftest lpy-nrepl-test-capf-late-source-keeps-its-exit-function ()
+  ;; Defect: the session starts with the nREPL alone (no exit function)
+  ;; and eglot answers on a later re-run, but the returned plist only
+  ;; dispatches the first result's keys, so eglot's exit function (its
+  ;; textEdit and snippet path) never runs.
+  (with-temp-buffer
+    (insert "x m")
+    (setq lpy-nrepl-test--calls nil)
+    (let ((eglot-ready nil))
+      (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                ((symbol-function 'eglot-completion-at-point)
+                 (lambda ()
+                   (when eglot-ready
+                     (lpy-nrepl-test--caching-eglot-capf))))
+                ((symbol-function 'lpy-nrepl-completion-at-point)
+                 (lambda ()
+                   (list (save-excursion (skip-chars-backward "a-z_-") (point))
+                         (point)
+                         (completion-table-dynamic (lambda (_) '("my-only")))
+                         :exclusive 'no))))
+        (pcase-let* ((`(,beg ,_ ,table . ,plist) (lpy-completion-at-point)))
+          (setq eglot-ready t)
+          (insert "y")
+          (let* ((my-var (lpy-nrepl-test--find
+                          "my-var"
+                          (all-completions (buffer-substring beg (point))
+                                           table nil)))
+                 (exit (plist-get plist :exit-function)))
+            (should my-var)
+            (should exit)
+            (funcall exit my-var 'finished)
+            (should (equal lpy-nrepl-test--calls '("my")))))))))
+
 (ert-deftest lpy-nrepl-test-merged-capf-single-source-is-unchanged ()
   ;; Defect: with one source missing the merge still wraps the other,
   ;; changing behaviour for users without eglot or without an nREPL.

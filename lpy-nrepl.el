@@ -1020,15 +1020,15 @@ cape's `cape-wrap-buster'."
                               copy))
                           (complete-with-action t table str pred)))
               (complete-with-action action table str pred)))
-         ;; Dispatchers for the per-candidate keys the first result has;
-         ;; a source joining mid-session (an nREPL connecting) adds none.
+         ;; A dispatcher for every per-candidate key, not only the first
+         ;; result's: a source joining mid-session (eglot answering after
+         ;; the nREPL did) brings its exit function and docs then.
+         ,@(cl-loop for key in lpy--capf-candidate-properties
+                    nconc (list key (lpy--generation-dispatcher
+                                     key (lambda () latest))))
          ,@(cl-loop for (key value) on plist by #'cddr
-                    nconc
-                    (list key
-                          (if (memq key lpy--capf-candidate-properties)
-                              (lpy--generation-dispatcher
-                               key (lambda () latest))
-                            value))))))))
+                    unless (memq key lpy--capf-candidate-properties)
+                    nconc (list key value)))))))
 
 (defun lpy-completion-at-point ()
   "Completion-at-point function for `lpy-mode' buffers.
