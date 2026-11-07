@@ -665,10 +665,19 @@ annotated with the kind the server reports for them.  Candidates come
 from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
-           (start (save-excursion
-                    (skip-chars-backward "a-zA-Z0-9_\\-.*")
-                    (point)))
-           (prefix (buffer-substring-no-properties start end))
+           (symbol-start (save-excursion
+                           (skip-chars-backward "a-zA-Z0-9_\\-.*")
+                           (point)))
+           (prefix (buffer-substring-no-properties symbol-start end))
+           ;; Complete the word after the last dot, as LSP does: both
+           ;; sources must share the start or `lpy--merge-capf-results'
+           ;; drops one.  The server still gets the full dotted PREFIX
+           ;; and returns full names, so HEAD (through the dot) is
+           ;; stripped from candidates and prepended for kind lookups.
+           (head (if (string-match "\\(?:.*\\.\\)" prefix)
+                     (match-string 0 prefix)
+                   ""))
+           (start (+ symbol-start (length head)))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
            (kinds nil)
@@ -690,15 +699,18 @@ from the buffer file's scope (the session scope without a file)."
                    (with-timeout (1 nil)
                      (while (not fetched)
                        (accept-process-output lpy-nrepl--connection 0.05))))
-                 result))
+                 (cl-loop for name in result
+                          when (string-prefix-p head name)
+                          collect (substring name (length head)))))
               :annotation-function
               (lambda (candidate)
                 (lpy-nrepl--kind-annotation
-                 (lpy-nrepl--kinds-lookup kinds candidate)))
+                 (lpy-nrepl--kinds-lookup kinds (concat head candidate))))
               :company-kind
               (lambda (candidate)
                 (nth 2 (assq (lpy-nrepl--kind
-                              (lpy-nrepl--kinds-lookup kinds candidate))
+                              (lpy-nrepl--kinds-lookup
+                               kinds (concat head candidate)))
                              lpy--completion-kinds)))
               :exclusive 'no)))))
 
@@ -904,8 +916,7 @@ text edit covering only that word.  Under the Lisp-derived mode table `.'
 is a symbol constituent, so the bounds would be `heapq.nl' and no
 candidate would match.  Only the eglot call uses this table: the mode
 table keeps `.' as a symbol character because sexp motion, font-lock and
-the nREPL's dotted names depend on it.  (The nREPL result for a dotted
-prefix starts earlier, so `lpy--merge-capf-results' drops it.)"
+the nREPL's dotted names depend on it."
   (let ((table (copy-syntax-table (syntax-table))))
     (modify-syntax-entry ?. "." table)
     table))
