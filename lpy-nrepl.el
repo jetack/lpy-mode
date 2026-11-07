@@ -624,8 +624,9 @@ resolved in the buffer file's scope (the session scope without a file)."
     (macro " macro" function))
   "Each completion kind as (KIND ANNOTATION COMPANY-KIND).
 The one vocabulary of candidate annotations: nREPL and LSP candidates
-resolve their kind number through `lpy--lsp-kinds' (older servers send
-KIND names, the symbols here) and then through this table.
+resolve their kind number through `lpy--lsp-kinds' (the
+fallback `kinds' field carries KIND names, the symbols here) and then
+through this table.
 Annotations are the full lowercase kind word, as JupyterLab, elpy and
 nvim-cmp show it.")
 
@@ -710,10 +711,11 @@ from the buffer file's scope (the session scope without a file)."
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
-                      ;; `assq': an empty `items' means no candidates, not
-                      ;; "fall back".  The `completions'/`kinds' fallback is
-                      ;; transitional: a later cleanup removes it once
-                      ;; lispython ships `items'.
+                      ;; Presence is tested on the raw vector, before any list
+                      ;; conversion: (append [] nil) is nil, and an empty
+                      ;; `items' means no candidates, not "fall back".  The
+                      ;; `completions'/`kinds' fallback is transitional,
+                      ;; removed by TASK-1130.
                       (if (setq items-p (assq 'items response))
                           (progn
                             (setq items (make-hash-table :test #'equal))

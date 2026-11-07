@@ -861,27 +861,25 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
           (kill-buffer buf))
         (delete-directory dir t)))))
 
-(defmacro lpy-nrepl-test--with-dotted-send (sent completions kinds &rest body)
-  "Run BODY with an nREPL whose `complete' reply is COMPLETIONS and KINDS.
+(defmacro lpy-nrepl-test--with-reply (sent reply &rest body)
+  "Run BODY with an nREPL whose `complete' reply is the alist REPLY.
 SENT is set to the prefix the client asked for."
-  (declare (indent 3))
+  (declare (indent 2))
   `(cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
              ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
              ((symbol-function 'lpy-nrepl--send)
               (lambda (msg &optional callback)
                 (setq ,sent (alist-get 'prefix msg))
-                (funcall callback
-                         (list (cons 'completions ',completions)
-                               (cons 'kinds ',kinds))))))
+                (funcall callback ,reply))))
      ,@body))
 
 (ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
   ;; Defect: the nREPL candidates start at the whole dotted symbol, so they
   ;; cannot line up with LSP's start and the merge drops them.
   (let (sent)
-    (lpy-nrepl-test--with-dotted-send sent
-        ["heapq.nlargest" "heapq.nsmallest"]
-        ((heapq.nlargest . "function"))
+    (lpy-nrepl-test--with-reply sent
+        '((completions . ["heapq.nlargest" "heapq.nsmallest"])
+          (kinds . ((heapq.nlargest . "function"))))
       (with-temp-buffer
         (insert "(import heapq)\nheapq.n")
         (let* ((res (lpy-nrepl-completion-at-point))
@@ -899,7 +897,7 @@ SENT is set to the prefix the client asked for."
 (ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
   ;; Defect: `heapq.' starts at the whole symbol instead of at point.
   (let (sent)
-    (lpy-nrepl-test--with-dotted-send sent ["heapq.nlargest"] nil
+    (lpy-nrepl-test--with-reply sent '((completions . ["heapq.nlargest"]))
       (with-temp-buffer
         (insert "heapq.")
         (let ((res (lpy-nrepl-completion-at-point)))
@@ -912,8 +910,8 @@ SENT is set to the prefix the client asked for."
   ;; symbol, the merge drops the nREPL-only names (runtime attributes).
   (require 'lpy-mode)
   (let (sent)
-    (lpy-nrepl-test--with-dotted-send sent
-        ["heapq.nlargest" "heapq.nlx_runtime"] nil
+    (lpy-nrepl-test--with-reply sent
+        '((completions . ["heapq.nlargest" "heapq.nlx_runtime"]))
       (with-temp-buffer
         (lpy-mode)
         (insert "(import heapq)\nheapq.nl")
@@ -927,18 +925,6 @@ SENT is set to the prefix the client asked for."
                  (names (all-completions "nl" (nth 2 res))))
             (should (member "nlargest" names))
             (should (member "nlx_runtime" names))))))))
-
-(defmacro lpy-nrepl-test--with-reply (sent reply &rest body)
-  "Run BODY with an nREPL whose `complete' reply is the alist REPLY.
-SENT is set to the prefix the client asked for."
-  (declare (indent 2))
-  `(cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
-             ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
-             ((symbol-function 'lpy-nrepl--send)
-              (lambda (msg &optional callback)
-                (setq ,sent (alist-get 'prefix msg))
-                (funcall callback ,reply))))
-     ,@body))
 
 (defun lpy-nrepl-test--item (label kind &optional description)
   "Return a parsed `items' entry, as `json-parse-string' yields it."
@@ -982,21 +968,15 @@ SENT is set to the prefix the client asked for."
                          " function"))
           (should (equal sent "heapq.n")))))))
 
-(ert-deftest lpy-nrepl-test-items-empty-means-no-candidates ()
-  ;; Defect: an empty `items' treated as absent falls back to `completions'.
+(ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
+  ;; Defect: converting `items' to a list before testing for its presence
+  ;; ((append [] nil) is nil) makes an empty reply fall back to `completions'.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
         '((items . []) (completions . ["foo"]) (kinds . ((foo . "function"))))
       (with-temp-buffer
         (insert "fo")
         (should-not (all-completions "fo" (nth 2 (lpy-nrepl-completion-at-point))))))))
-
-(ert-deftest lpy-nrepl-test-kinds-fallback-without-items ()
-  (let (sent)
-    (lpy-nrepl-test--with-reply sent
-        '((completions . ["foo"]) (kinds . ((foo . "function"))))
-      (should (equal (lpy-nrepl-test--annotations "fo" "foo")
-                     '((" function" . function)))))))
 
 (ert-deftest lpy-nrepl-test-items-win-over-kinds ()
   (let (sent)
@@ -1006,16 +986,14 @@ SENT is set to the prefix the client asked for."
       (should (equal (lpy-nrepl-test--annotations "fo" "foo")
                      '((" class" . class)))))))
 
-(ert-deftest lpy-nrepl-test-nrepl-and-eglot-items-annotate-alike ()
-  ;; Defect: the two sources diverging on how one kind is shown.
+(ert-deftest lpy-nrepl-test-items-empty-description-uses-kind-word ()
+  ;; Defect: a description of "" shown as a blank annotation instead of
+  ;; the kind word.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "m" 3 "macro")
-                    ,(lpy-nrepl-test--item "c" 7)]))
-      (should (equal (mapcar #'car (lpy-nrepl-test--annotations "m" "m" "c"))
-                     (list (lpy--lsp-annotation
-                            '(:kind 3 :labelDetails (:description "macro")))
-                           (lpy--lsp-annotation '(:kind 7))))))))
+        `((items . [,(lpy-nrepl-test--item "foo" 7 "")]))
+      (should (equal (lpy-nrepl-test--annotations "fo" "foo")
+                     '((" class" . class)))))))
 
 (provide 'lpy-nrepl-test)
 
