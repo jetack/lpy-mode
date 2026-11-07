@@ -631,23 +631,26 @@ from the buffer file's scope (the session scope without a file)."
            (prefix (buffer-substring-no-properties start end))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
-           (kinds nil))
+           (kinds nil)
+           (result nil)
+           (fetched nil))
       (when (> (length prefix) 0)
         (list start end
               (completion-table-dynamic
                (lambda (_)
-                 (let ((result nil)
-                       (done nil))
+                 ;; The fetch depends only on the prefix captured above, so
+                 ;; one request serves every table call; a timeout stays retryable.
+                 (unless fetched
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
                       (setq result (append (alist-get 'completions response) nil))
                       (setq kinds (alist-get 'kinds response))
-                      (setq done t)))
+                      (setq fetched t)))
                    (with-timeout (1 nil)
-                     (while (not done)
-                       (accept-process-output lpy-nrepl--connection 0.05)))
-                   result)))
+                     (while (not fetched)
+                       (accept-process-output lpy-nrepl--connection 0.05))))
+                 result))
               :annotation-function
               (lambda (candidate)
                 (lpy-nrepl--kind-annotation
@@ -657,6 +660,126 @@ from the buffer file's scope (the session scope without a file)."
                 (cdr (assoc (lpy-nrepl--kinds-lookup kinds candidate)
                             lpy-nrepl--company-kinds)))
               :exclusive 'no)))))
+
+;;;; Merged completion (LSP + nREPL)
+
+(declare-function eglot-completion-at-point "eglot" ())
+(declare-function eglot-managed-p "eglot" ())
+
+(defconst lpy--capf-candidate-properties
+  '(:annotation-function :exit-function :company-doc-buffer :company-docsig
+    :company-location :company-kind :company-deprecated)
+  "Capf properties that take a candidate.
+A merged completion dispatches each to the source that owns the candidate.")
+
+(defun lpy--capf-table-metadata (table pred)
+  "Return the metadata alist (without the `metadata' head) of TABLE.
+PRED is the predicate TABLE was given."
+  (cdr (completion-metadata "" table pred)))
+
+(defun lpy--merge-capf-results (main extra)
+  "Merge capf results MAIN and EXTRA, each (BEG END TABLE . PLIST) or nil.
+A candidate name both offer is kept once, as MAIN's string, so MAIN's
+annotation, docs and exit function apply to it.  Names only EXTRA offers
+follow MAIN's candidates and keep EXTRA's per-candidate properties."
+  (cond
+   ((null extra) main)
+   ((null main) extra)
+   ;; Candidates completing different prefixes cannot be compared or
+   ;; shown in one list (the same rule as `cape-capf-super').
+   ((/= (car main) (car extra)) main)
+   (t
+    (pcase-let* ((`(,beg ,main-end ,main-table . ,main-plist) main)
+                 (`(,_ ,extra-end ,extra-table . ,extra-plist) extra)
+                 (main-pred (plist-get main-plist :predicate))
+                 (extra-pred (plist-get extra-plist :predicate))
+                 (extra-only (make-hash-table :test #'equal)))
+      (cl-labels
+          ((and-pred (own pred)
+             (cond ((and own pred) (lambda (&rest args)
+                                     (and (apply own args) (apply pred args))))
+                   (t (or own pred))))
+           (candidates (str pred)
+             (clrhash extra-only)
+             (let ((main-cands (all-completions str main-table
+                                                (and-pred main-pred pred)))
+                   (seen (make-hash-table :test #'equal))
+                   (kept nil))
+               (dolist (cand main-cands)
+                 (puthash (substring-no-properties cand) t seen))
+               (dolist (cand (all-completions str extra-table
+                                              (and-pred extra-pred pred)))
+                 (let ((name (substring-no-properties cand)))
+                   (unless (gethash name seen)
+                     (puthash name t seen)
+                     (puthash name t extra-only)
+                     (push cand kept))))
+               ;; MAIN's strings are returned as they are: eglot keeps
+               ;; its LSP item as a text property on the candidate.
+               (append main-cands (nreverse kept))))
+           (owner-plist (cand)
+             (if (gethash (substring-no-properties cand) extra-only)
+                 extra-plist
+               main-plist)))
+        (let* ((main-meta (lpy--capf-table-metadata main-table main-pred))
+               (extra-meta (lpy--capf-table-metadata extra-table extra-pred))
+               (sorter
+                (lambda (key)
+                  (let ((main-sort (or (alist-get key main-meta) #'identity))
+                        (extra-sort (or (alist-get key extra-meta) #'identity)))
+                    (lambda (cands)
+                      (let (main-part extra-part)
+                        (dolist (cand cands)
+                          (if (gethash (substring-no-properties cand) extra-only)
+                              (push cand extra-part)
+                            (push cand main-part)))
+                        (append (funcall main-sort (nreverse main-part))
+                                (funcall extra-sort (nreverse extra-part))))))))
+               (metadata
+                ;; MAIN's `category' is kept, so a style tied to it
+                ;; (eglot's `eglot-capf') still applies.
+                `(metadata
+                  (display-sort-function . ,(funcall sorter 'display-sort-function))
+                  (cycle-sort-function . ,(funcall sorter 'cycle-sort-function))
+                  ,@(cl-remove-if (lambda (entry)
+                                  (memq (car-safe entry)
+                                        '(display-sort-function
+                                          cycle-sort-function)))
+                                main-meta)))
+               (table
+                (lambda (str pred action)
+                  (pcase action
+                    ('metadata metadata)
+                    (`(boundaries . ,_) nil)
+                    ;; Not re-filtered by prefix: eglot's table returns
+                    ;; flex matches that a prefix filter would drop.
+                    ('t (candidates str pred))
+                    (_ (complete-with-action action (candidates str pred)
+                                             str nil)))))
+               (plist (cl-loop for (key value) on main-plist by #'cddr
+                               unless (eq key :predicate)
+                               nconc (list key value))))
+          (dolist (prop lpy--capf-candidate-properties)
+            (when (or (plist-member main-plist prop)
+                      (plist-member extra-plist prop))
+              (setq plist
+                    (plist-put plist prop
+                               (lambda (cand &rest args)
+                                 (let ((fn (plist-get (owner-plist cand) prop)))
+                                   (when fn (apply fn cand args))))))))
+          `(,beg ,(max main-end extra-end) ,table ,@plist)))))))
+
+(defun lpy-completion-at-point ()
+  "Completion-at-point function for `lpy-mode' buffers.
+Merges the candidates of `eglot-completion-at-point', when eglot manages
+the buffer, with those of `lpy-nrepl-completion-at-point', when an nREPL
+is connected.  A name both offer appears once, with eglot's annotation,
+docs and exit function; names only the nREPL knows keep its annotation
+and kind.  Works with neither, either or both sources available."
+  (lpy--merge-capf-results
+   (and (fboundp 'eglot-managed-p) (eglot-managed-p)
+        (eglot-completion-at-point))
+   (lpy-nrepl-completion-at-point)))
 
 ;;; Eldoc (nREPL-backed)
 
