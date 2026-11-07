@@ -795,6 +795,139 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
     (should (eq (car completion-at-point-functions) #'lpy-completion-at-point))
     (should (memq #'eglot-completion-at-point completion-at-point-functions))))
 
+(defun lpy-nrepl-test--assert-dotted-bounds (result)
+  "Assert RESULT's bounds cover only the `nl' after the dot in the buffer."
+  (let* ((start (nth 0 result))
+         (end (nth 1 result))
+         (text (buffer-substring-no-properties start end)))
+    (should (= start (1+ (save-excursion (goto-char (point-max))
+                                         (search-backward ".")))))
+    (should (equal text "nl"))
+    (should (member "nlargest" (all-completions text (nth 2 result))))))
+
+(ert-deftest lpy-nrepl-test-capf-dotted-bounds-stub ()
+  ;; Defect: eglot takes symbol bounds, and `.' is a symbol character in
+  ;; `lpy-mode-syntax-table', so `heapq.nl' becomes the prefix and the
+  ;; server's candidates (edit range `nl') never match.
+  (require 'lpy-mode)
+  (with-temp-buffer
+    (lpy-mode)
+    (insert "(import heapq)\nheapq.nl")
+    (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+              ((symbol-function 'eglot-completion-at-point)
+               (lambda ()
+                 (let ((b (or (bounds-of-thing-at-point 'symbol)
+                              (cons (point) (point)))))
+                   (list (car b) (cdr b) (list "nlargest" "nsmallest")))))
+              ((symbol-function 'lpy-nrepl-completion-at-point) (lambda () nil)))
+      (lpy-nrepl-test--assert-dotted-bounds (lpy-completion-at-point))
+      ;; The mode table is untouched: sexp motion needs dotted symbols.
+      (should (eq (char-syntax ?.) ?_)))))
+
+(ert-deftest lpy-nrepl-test-capf-dotted-bounds-live ()
+  ;; Same defect against real eglot and the real lispython server.
+  (let ((python (getenv "LPY_TEST_LSP_PYTHON")))
+    (skip-unless (and python (file-executable-p python)
+                      (zerop (call-process python nil nil nil
+                                           "-c" "import lispy.lsp"))))
+    (require 'eglot)
+    (require 'lpy-mode)
+    (let* ((dir (file-name-as-directory (make-temp-file "lpy-lsp-" t)))
+           (file (expand-file-name "t.lpy" dir))
+           (eglot-server-programs
+            `((lpy-mode . (,python "-m" "lispy.lsp"))))
+           (project-find-functions
+            (list (lambda (_) (cons 'transient dir))))
+           (eglot-sync-connect 60)
+           (buf nil))
+      (with-temp-file file (insert "(import heapq)\nheapq.nl"))
+      (unwind-protect
+          (progn
+            (setq buf (find-file-noselect file))
+            (with-current-buffer buf
+              (apply #'eglot (eglot--guess-contact))
+              (let ((deadline (+ (float-time) 30)))
+                (while (and (not (eglot-managed-p))
+                            (< (float-time) deadline))
+                  (accept-process-output nil 0.1)))
+              (should (eglot-managed-p))
+              (goto-char (point-max))
+              (lpy-nrepl-test--assert-dotted-bounds (lpy-completion-at-point))))
+        (when (buffer-live-p buf)
+          (with-current-buffer buf
+            (ignore-errors (when (eglot-managed-p)
+                             (eglot-shutdown (eglot-current-server))))
+            (set-buffer-modified-p nil))
+          (kill-buffer buf))
+        (delete-directory dir t)))))
+
+(defmacro lpy-nrepl-test--with-dotted-send (sent completions kinds &rest body)
+  "Run BODY with an nREPL whose `complete' reply is COMPLETIONS and KINDS.
+SENT is set to the prefix the client asked for."
+  (declare (indent 3))
+  `(cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+             ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
+             ((symbol-function 'lpy-nrepl--send)
+              (lambda (msg &optional callback)
+                (setq ,sent (alist-get 'prefix msg))
+                (funcall callback
+                         (list (cons 'completions ',completions)
+                               (cons 'kinds ',kinds))))))
+     ,@body))
+
+(ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
+  ;; Defect: the nREPL candidates start at the whole dotted symbol, so they
+  ;; cannot line up with LSP's start and the merge drops them.
+  (let (sent)
+    (lpy-nrepl-test--with-dotted-send sent
+        ["heapq.nlargest" "heapq.nsmallest"]
+        ((heapq.nlargest . "function"))
+      (with-temp-buffer
+        (insert "(import heapq)\nheapq.n")
+        (let* ((res (lpy-nrepl-completion-at-point))
+               (table (nth 2 res))
+               (annotate (plist-get (nthcdr 3 res) :annotation-function)))
+          (should (= (nth 0 res) (1+ (- (point) 2))))
+          (should (equal (all-completions "n" table)
+                         '("nlargest" "nsmallest")))
+          (should (equal (funcall annotate "nlargest") " function"))
+          (should (eq (funcall (plist-get (nthcdr 3 res) :company-kind)
+                               "nlargest")
+                      'function))
+          (should (equal sent "heapq.n")))))))
+
+(ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
+  ;; Defect: `heapq.' starts at the whole symbol instead of at point.
+  (let (sent)
+    (lpy-nrepl-test--with-dotted-send sent ["heapq.nlargest"] nil
+      (with-temp-buffer
+        (insert "heapq.")
+        (let ((res (lpy-nrepl-completion-at-point)))
+          (should (= (nth 0 res) (point)))
+          (should (equal (all-completions "" (nth 2 res)) '("nlargest")))
+          (should (equal sent "heapq.")))))))
+
+(ert-deftest lpy-nrepl-test-dotted-merge-keeps-nrepl-names ()
+  ;; Defect: with eglot starting after the dot and the nREPL at the whole
+  ;; symbol, the merge drops the nREPL-only names (runtime attributes).
+  (require 'lpy-mode)
+  (let (sent)
+    (lpy-nrepl-test--with-dotted-send sent
+        ["heapq.nlargest" "heapq.nlx_runtime"] nil
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(import heapq)\nheapq.nl")
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                  ((symbol-function 'eglot-completion-at-point)
+                   (lambda ()
+                     (let ((b (or (bounds-of-thing-at-point 'symbol)
+                                  (cons (point) (point)))))
+                       (list (car b) (cdr b) (list "nlargest"))))))
+          (let* ((res (lpy-completion-at-point))
+                 (names (all-completions "nl" (nth 2 res))))
+            (should (member "nlargest" names))
+            (should (member "nlx_runtime" names))))))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here
