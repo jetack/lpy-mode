@@ -629,10 +629,11 @@ EGLOT and NREPL are forms giving each stub's result."
     (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))
                  (cands (funcall table "hea" nil t)))
       (should (= 1 (cl-count "heappush" cands :test #'equal)))
-      (should (member "head" cands))
-      (should (equal (funcall (plist-get plist :annotation-function) "head")
-                     " fn"))
-      (should (eq (funcall (plist-get plist :company-kind) "head") 'function))
+      (let ((head (lpy-nrepl-test--find "head" cands)))
+        (should head)
+        (should (equal (funcall (plist-get plist :annotation-function) head)
+                       " fn"))
+        (should (eq (funcall (plist-get plist :company-kind) head) 'function)))
       (should (equal lpy-nrepl-test--calls '((nrepl-kind "head"))))
       ;; A property only nREPL provides yields nil for eglot's candidates.
       (should-not (funcall (plist-get plist :company-kind)
@@ -726,10 +727,71 @@ the word at capf time and matches every later input against that answer."
           ;; One request per distinct input; an unchanged input sends none.
           (corfu-update)
           (should (equal lpy-nrepl-test--requests '("my-v" "my-" "my" "m")))
-          ;; The exit function is the latest capf call's.
+          ;; A candidate listed at `my-v' runs that capf call's exit function.
           (funcall (plist-get plist :exit-function)
                    (lpy-nrepl-test--find "my-var" (corfu-update)) 'finished)
           (should (equal lpy-nrepl-test--calls '("my-v"))))))))
+
+(defun lpy-nrepl-test--text-edit-eglot-capf ()
+  "Stub of `eglot-completion-at-point' whose exit applies a textEdit.
+Each candidate's edit covers the word as it was at the request.  As
+eglot's, the exit function first restores the buffer to its own capf
+call's state (ORIG-POS, BOUNDS-STRING), then applies the edit."
+  (let* ((orig-pos (point))
+         (beg (save-excursion (skip-chars-backward "a-z_-") (point)))
+         (bounds-string (buffer-substring-no-properties beg orig-pos))
+         (cands (list (propertize "my-var" 'eglot--lsp-item
+                                  `(:label "my-var" :kind 6
+                                    :textEdit (,beg . ,orig-pos))))))
+    (list beg orig-pos
+          (lambda (str pred action)
+            (if (eq action 'metadata)
+                '(metadata (category . eglot-capf))
+              (complete-with-action action cands str pred)))
+          :exit-function
+          (lambda (proxy _status)
+            (let* ((item (lpy--eglot-item proxy))
+                   (edit (plist-get item :textEdit)))
+              (delete-region orig-pos (point))
+              (insert (substring bounds-string (- orig-pos beg)))
+              (delete-region (car edit) (cdr edit))
+              (goto-char (car edit))
+              (insert (plist-get item :label)))))))
+
+(ert-deftest lpy-nrepl-test-capf-accept-keeps-listing-generation ()
+  ;; Defect: a re-run after the candidate is inserted replaces the exit
+  ;; function, which then restores the inserted text and applies the
+  ;; listed candidate's edit after it: "x my-varvar".  Its merge also
+  ;; forgets which listed names were the nREPL's.
+  (with-temp-buffer
+    (insert "x m")
+    (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+              ((symbol-function 'eglot-completion-at-point)
+               #'lpy-nrepl-test--text-edit-eglot-capf)
+              ((symbol-function 'lpy-nrepl-completion-at-point)
+               (lambda ()
+                 (list (save-excursion (skip-chars-backward "a-z_-") (point))
+                       (point)
+                       (completion-table-dynamic (lambda (_) '("my-only")))
+                       :annotation-function (lambda (_c) " nrepl")
+                       :exclusive 'no))))
+      (pcase-let* ((`(,beg ,_ ,table . ,plist) (lpy-completion-at-point)))
+        (insert "y-")
+        (let* ((input (buffer-substring-no-properties beg (point)))
+               (cands (progn (completion-metadata input table nil)
+                             (all-completions input table nil)))
+               (my-var (lpy-nrepl-test--find "my-var" cands))
+               (my-only (lpy-nrepl-test--find "my-only" cands)))
+          ;; Accept as corfu does: insert, then query the table again.
+          (delete-region beg (point))
+          (insert "my-var")
+          (all-completions "my-var" table nil)
+          (test-completion "my-var" table nil)
+          (funcall (plist-get plist :exit-function) my-var 'finished)
+          (should (equal (buffer-string) "x my-var"))
+          (should (equal (funcall (plist-get plist :annotation-function)
+                                  my-only)
+                         " nrepl")))))))
 
 (ert-deftest lpy-nrepl-test-merged-capf-single-source-is-unchanged ()
   ;; Defect: with one source missing the merge still wraps the other,
