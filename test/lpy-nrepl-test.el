@@ -371,6 +371,24 @@ The stubbed send records each message and answers it with a canned response."
     (should (= (length msgs) 3))
     (dolist (m msgs) (should-not (assq 'file m)))))
 
+(ert-deftest lpy-nrepl-test-complete-fetches-once-per-capf-call ()
+  (let ((sends 0))
+    (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+              ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
+              ((symbol-function 'lpy-nrepl--send)
+               (lambda (_msg &optional callback)
+                 (cl-incf sends)
+                 (funcall callback
+                          '((completions . ["heapify" "heappush"])
+                            (kinds . ((heapify . "function"))))))))
+      (with-temp-buffer
+        (insert "hea")
+        (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
+          (should (equal (all-completions "hea" table) '("heapify" "heappush")))
+          (should (equal (try-completion "hea" table) "heap"))
+          (should (test-completion "heapify" table))
+          (should (= sends 1)))))))
+
 ;;; File scope
 
 (require 'lpy-mode)

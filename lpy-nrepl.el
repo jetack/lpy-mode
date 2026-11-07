@@ -631,23 +631,26 @@ from the buffer file's scope (the session scope without a file)."
            (prefix (buffer-substring-no-properties start end))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
-           (kinds nil))
+           (kinds nil)
+           (result nil)
+           (fetched nil))
       (when (> (length prefix) 0)
         (list start end
               (completion-table-dynamic
                (lambda (_)
-                 (let ((result nil)
-                       (done nil))
+                 ;; The fetch depends only on the prefix captured above, so
+                 ;; one request serves every table call; a timeout stays retryable.
+                 (unless fetched
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
                       (setq result (append (alist-get 'completions response) nil))
                       (setq kinds (alist-get 'kinds response))
-                      (setq done t)))
+                      (setq fetched t)))
                    (with-timeout (1 nil)
-                     (while (not done)
-                       (accept-process-output lpy-nrepl--connection 0.05)))
-                   result)))
+                     (while (not fetched)
+                       (accept-process-output lpy-nrepl--connection 0.05))))
+                 result))
               :annotation-function
               (lambda (candidate)
                 (lpy-nrepl--kind-annotation
