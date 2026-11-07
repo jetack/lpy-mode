@@ -268,10 +268,11 @@ connection, so it must no longer see the old process as current."
   (let ((old lpy-nrepl--connection))
     (setq lpy-nrepl--connection new)
     (setq lpy-nrepl--pending-callbacks nil)
-    ;; A new or restarted server holds no state for the chosen file scope;
-    ;; string evals would otherwise silently run in an empty scope.
-    (setq lpy-nrepl--scope nil)
-    (force-mode-line-update t)
+    ;; A replaced or dropped server's file scopes may be gone, and string
+    ;; evals would silently run in an empty one; the log records the reset.
+    ;; A scope chosen while disconnected (OLD nil) is kept for the first connect.
+    (when (and old lpy-nrepl--scope)
+      (lpy-nrepl--set-scope nil "connection changed"))
     (when old
       (delete-process old))))
 
@@ -415,10 +416,12 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 
 ;;; Eval Commands
 
-(defun lpy-nrepl--set-scope (path)
-  "Set the eval scope to file PATH (nil: `__main__'), log and announce it."
+(defun lpy-nrepl--set-scope (path &optional reason)
+  "Set the eval scope to file PATH (nil: `__main__'), log and announce it.
+REASON, a string, is appended in parentheses to the log line."
   (setq lpy-nrepl--scope path)
-  (let ((text (format "scope: %s" (lpy-nrepl--scope-label t))))
+  (let ((text (format "scope: %s%s" (lpy-nrepl--scope-label t)
+                      (if reason (format " (%s)" reason) ""))))
     (lpy-nrepl--log "scope" (concat ";; " text))
     (force-mode-line-update t)
     (message "lpy-nrepl %s" text)))
@@ -442,7 +445,8 @@ Pick among the open `lpy-mode' file buffers; empty input selects `__main__'."
   ;; vertico preselects candidate 0, so RET would pick the first file.
   (let* ((main lpy-nrepl--main-scope-label)
          (alist (cons (cons main nil) (lpy-nrepl--scope-candidates)))
-         (choice (completing-read "File scope: " alist nil t nil nil main)))
+         (choice (completing-read (format "File scope (default %s): " main)
+                           alist nil t nil nil main)))
     (lpy-nrepl--set-scope
      (and (not (string-empty-p choice)) (cdr (assoc choice alist))))))
 
