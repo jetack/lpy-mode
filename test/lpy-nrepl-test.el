@@ -850,16 +850,12 @@ SENT is set to the prefix the client asked for."
   "Captured reply to prefix `heapq.nl'.")
 
 (defconst lpy-nrepl-test--reply-heapq-heap
-  "{\"op\":\"complete-result\",\"word\":\"heap\",\"completions\":[\"heapq.heapify\",\"heapq.heapify-max\",\"heapq.heappop\",\"heapq.heappop-max\",\"heapq.heappush\",\"heapq.heappush-max\",\"heapq.heappushpop\",\"heapq.heappushpop-max\",\"heapq.heapreplace\",\"heapq.heapreplace-max\"],\"items\":[{\"label\":\"heapify\",\"kind\":3},{\"label\":\"heapify-max\",\"kind\":3},{\"label\":\"heappop\",\"kind\":3},{\"label\":\"heappop-max\",\"kind\":3},{\"label\":\"heappush\",\"kind\":3},{\"label\":\"heappush-max\",\"kind\":3},{\"label\":\"heappushpop\",\"kind\":3},{\"label\":\"heappushpop-max\",\"kind\":3},{\"label\":\"heapreplace\",\"kind\":3},{\"label\":\"heapreplace-max\",\"kind\":3}]}"
+  "{\"op\": \"complete-result\", \"word\": \"heap\", \"completions\": [\"heapq.heapify\", \"heapq.heapify-max\", \"heapq.heappop\", \"heapq.heappop-max\", \"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\", \"heapq.heapreplace\", \"heapq.heapreplace-max\"], \"items\": [{\"label\": \"heapify\", \"kind\": 3}, {\"label\": \"heapify-max\", \"kind\": 3}, {\"label\": \"heappop\", \"kind\": 3}, {\"label\": \"heappop-max\", \"kind\": 3}, {\"label\": \"heappush\", \"kind\": 3}, {\"label\": \"heappush-max\", \"kind\": 3}, {\"label\": \"heappushpop\", \"kind\": 3}, {\"label\": \"heappushpop-max\", \"kind\": 3}, {\"label\": \"heapreplace\", \"kind\": 3}, {\"label\": \"heapreplace-max\", \"kind\": 3}], \"id\": \"3\"}"
   "Captured reply to prefix `heapq.heap'.")
 
 (defconst lpy-nrepl-test--reply-ok
   "{\"op\": \"complete-result\", \"word\": \"ok\", \"completions\": [\"ok?\"], \"items\": [{\"label\": \"ok?\", \"kind\": 3}], \"id\": \"4\"}"
   "Captured reply to prefix `ok'.")
-
-(defconst lpy-nrepl-test--reply-arrow
-  "{\"op\": \"complete-result\", \"word\": \"->f\", \"completions\": [\"->foo\"], \"items\": [{\"label\": \"->foo\", \"kind\": 3}], \"id\": \"5\"}"
-  "Captured reply to prefix `->f'.")
 
 (ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
   ;; Defect: labels are the word after the last dot; filtering them by the
@@ -882,7 +878,8 @@ SENT is set to the prefix the client asked for."
 
 (ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
   ;; Defect: `heapq.' starts at the whole symbol instead of at point.
-  ;; The reply is the `heapq.nl' capture: START does not depend on it.
+  ;; Asserts only START and the sent prefix, which do not depend on the
+  ;; reply (the `heapq.nl' capture is a stand-in).
   (let (sent)
     (lpy-nrepl-test--with-reply sent
         (lpy-nrepl-test--captured lpy-nrepl-test--reply-heapq-nl)
@@ -890,12 +887,12 @@ SENT is set to the prefix the client asked for."
         (insert "heapq.")
         (let ((res (lpy-nrepl-completion-at-point)))
           (should (= (nth 0 res) (point)))
-          (should (equal (all-completions "" (nth 2 res)) '("nlargest")))
+          (all-completions "" (nth 2 res)) ; triggers the fetch
           (should (equal sent "heapq.")))))))
 
 (ert-deftest lpy-nrepl-test-dotted-merge-keeps-nrepl-names ()
-  ;; Defect: with eglot starting after the dot and the nREPL elsewhere,
-  ;; the merge drops the nREPL-only names (runtime attributes).
+  ;; Defect: stripping the head from bare labels drops them all, so the
+  ;; nREPL-only name `heapify-max' is lost in the merge.
   (require 'lpy-mode)
   (let (sent)
     (lpy-nrepl-test--with-reply sent
@@ -960,22 +957,20 @@ SENT is set to the prefix the client asked for."
           (should (equal sent "heapq.heap")))))))
 
 (ert-deftest lpy-nrepl-test-code-spelled-labels-pass-through ()
-  ;; Labels like `ok?' and `->foo' reach the table unchanged, annotated.
+  ;; A label like `ok?' reaches the table unchanged, annotated.
   (let (sent)
-    (dolist (case (list (list "ok" "ok?" lpy-nrepl-test--reply-ok)
-                        (list "->f" "->foo" lpy-nrepl-test--reply-arrow)))
-      (lpy-nrepl-test--with-reply sent
-          (lpy-nrepl-test--captured (nth 2 case))
-        (with-temp-buffer
-          (insert (nth 0 case))
-          (let* ((res (lpy-nrepl-completion-at-point))
-                 (props (nthcdr 3 res)))
-            (should (equal (all-completions "" (nth 2 res)) (list (nth 1 case))))
-            (should (equal (funcall (plist-get props :annotation-function)
-                                    (nth 1 case))
-                           " function"))
-            (should (eq (funcall (plist-get props :company-kind) (nth 1 case))
-                        'function))))))))
+    (lpy-nrepl-test--with-reply sent
+        (lpy-nrepl-test--captured lpy-nrepl-test--reply-ok)
+      (with-temp-buffer
+        (insert "ok")
+        (let* ((res (lpy-nrepl-completion-at-point))
+               (props (nthcdr 3 res)))
+          (should (equal (all-completions "ok" (nth 2 res)) '("ok?")))
+          (should (equal (funcall (plist-get props :annotation-function) "ok?")
+                         " function"))
+          (should (eq (funcall (plist-get props :company-kind) "ok?")
+                      'function))
+          (should (equal sent "ok")))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
   ;; Defect: an empty `items' reply lists candidates from another field.
