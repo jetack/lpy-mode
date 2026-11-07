@@ -620,13 +620,11 @@ resolved in the buffer file's scope (the session scope without a file)."
     (struct " struct" struct)
     (event " event" event)
     (operator " operator" operator)
-    (type-parameter " type parameter" type-parameter)
-    (macro " macro" function))
+    (type-parameter " type parameter" type-parameter))
   "Each completion kind as (KIND ANNOTATION COMPANY-KIND).
 The one vocabulary of candidate annotations: nREPL and LSP candidates
-resolve their kind number through `lpy--lsp-kinds' (the
-fallback `kinds' field carries KIND names, the symbols here) and then
-through this table.
+resolve their kind number through `lpy--lsp-kinds' and then through
+this table.
 Annotations are the full lowercase kind word, as JupyterLab, elpy and
 nvim-cmp show it.")
 
@@ -659,20 +657,6 @@ rule of eglot and nREPL candidates, so one kind displays identically."
   "Return the `:company-kind' of KIND-NUMBER, an LSP CompletionItemKind."
   (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
-(defun lpy-nrepl--kind (name)
-  "Return the kind symbol of NAME, a name in the fallback `kinds' field.
-Nil when NAME is no known kind."
-  (and (stringp name)
-       (car (assq (intern-soft name) lpy--completion-kinds))))
-
-(defun lpy-nrepl--kind-annotation (name)
-  "Return the annotation for nREPL kind NAME, or nil when unknown."
-  (lpy--kind-annotation (lpy-nrepl--kind name)))
-
-(defun lpy-nrepl--kinds-lookup (kinds candidate)
-  "Return the kind of CANDIDATE in KINDS, the alist from a complete response."
-  (alist-get (intern candidate) kinds))
-
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
@@ -689,16 +673,14 @@ from the buffer file's scope (the session scope without a file)."
            ;; sources must share the start or `lpy--merge-capf-results'
            ;; drops one.  The server still gets the full dotted PREFIX
            ;; and returns full names, so HEAD (through the dot) is
-           ;; stripped from candidates and prepended for kind lookups.
+           ;; stripped from candidates and prepended for item lookups.
            (head (if (string-match "\\(?:.*\\.\\)" prefix)
                      (match-string 0 prefix)
                    ""))
            (start (+ symbol-start (length head)))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
-           (kinds nil)
-           (items nil)                  ; label -> (KIND-NUMBER . DESCRIPTION)
-           (items-p nil)
+           (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER . DESCRIPTION)
            (result nil)
            (fetched nil))
       (when (> (length prefix) 0)
@@ -711,28 +693,19 @@ from the buffer file's scope (the session scope without a file)."
                    (lpy-nrepl--send
                     `((op . "complete") (prefix . ,prefix) ,@file-fields)
                     (lambda (response)
-                      ;; The `items' KEY is tested (`assq') before any list
-                      ;; conversion, so an empty [] (or null) means no
-                      ;; candidates, not "fall back".  The
-                      ;; `completions'/`kinds' fallback is transitional,
-                      ;; removed by TASK-1130.
-                      (if (setq items-p (assq 'items response))
-                          (progn
-                            (setq items (make-hash-table :test #'equal))
-                            (setq result nil)
-                            (mapc (lambda (item)
-                                    (let ((label (alist-get 'label item)))
-                                      (push label result)
-                                      (puthash label
-                                               (cons (alist-get 'kind item)
-                                                     (alist-get 'description
-                                                                (alist-get 'labelDetails item)))
-                                               items)))
-                                  (cdr items-p))
-                            (setq result (nreverse result)))
-                        (setq result (append (alist-get 'completions response) nil))
-                        (setq kinds (alist-get 'kinds response)))
-                      (setq fetched t)))
+                      (setq items (make-hash-table :test #'equal))
+                      (setq result nil)
+                      (mapc (lambda (item)
+                              (let ((label (alist-get 'label item)))
+                                (push label result)
+                                (puthash label
+                                         (cons (alist-get 'kind item)
+                                               (alist-get 'description
+                                                          (alist-get 'labelDetails item)))
+                                         items)))
+                            (alist-get 'items response))
+                      (setq result (nreverse result)
+                            fetched t)))
                    (with-timeout (1 nil)
                      (while (not fetched)
                        (accept-process-output lpy-nrepl--connection 0.05))))
@@ -741,20 +714,12 @@ from the buffer file's scope (the session scope without a file)."
                           collect (substring name (length head)))))
               :annotation-function
               (lambda (candidate)
-                (let ((name (concat head candidate)))
-                  (if items-p
-                      (let ((item (gethash name items)))
-                        (lpy--item-annotation (cdr item) (car item)))
-                    (lpy-nrepl--kind-annotation
-                     (lpy-nrepl--kinds-lookup kinds name)))))
+                (let ((item (gethash (concat head candidate) items)))
+                  (lpy--item-annotation (cdr item) (car item))))
               :company-kind
               (lambda (candidate)
-                (let ((name (concat head candidate)))
-                  (if items-p
-                      (lpy--item-company-kind (car (gethash name items)))
-                    (nth 2 (assq (lpy-nrepl--kind
-                                  (lpy-nrepl--kinds-lookup kinds name))
-                                 lpy--completion-kinds)))))
+                (lpy--item-company-kind
+                 (car (gethash (concat head candidate) items))))
               :exclusive 'no)))))
 
 ;;;; Merged completion (LSP + nREPL)
