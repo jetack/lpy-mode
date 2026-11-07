@@ -660,6 +660,77 @@ EGLOT and NREPL are forms giving each stub's result."
     (let ((table (nth 2 (lpy-completion-at-point))))
       (should (member "theap" (funcall table "hea" nil t))))))
 
+(defvar lpy-nrepl-test--requests nil
+  "Words the fake LSP server was asked to complete, newest first.")
+
+(defun lpy-nrepl-test--incomplete-server (word)
+  "Fake LSP answer for WORD, as lispython marks it isIncomplete.
+filterText is WORD plus the rest of the label, spelled `my_var' until
+WORD holds a `-'."
+  (push word lpy-nrepl-test--requests)
+  (let ((spelling (if (string-search "-" word) "my-var" "my_var")))
+    (list (propertize "my-var" 'eglot--lsp-item
+                      `(:label "my-var" :kind 6
+                        :filterText ,(concat word (substring spelling
+                                                             (length word))))))))
+
+(defun lpy-nrepl-test--caching-eglot-capf ()
+  "Stub of `eglot-completion-at-point' caching its answer per table.
+As eglot's `local-cache', the table asks the server once, lazily, for
+the word at capf time and matches every later input against that answer."
+  (let* ((end (point))
+         (beg (save-excursion (skip-chars-backward "a-z_-") (point)))
+         (word (buffer-substring-no-properties beg end))
+         (cache :none))
+    (list beg end
+          (lambda (str _pred action)
+            (pcase action
+              ('metadata '(metadata (category . eglot-capf)))
+              ('t (when (eq cache :none)
+                    (setq cache (lpy-nrepl-test--incomplete-server word)))
+                  (cl-remove-if-not
+                   (lambda (c)
+                     (string-prefix-p
+                      str (plist-get (lpy--eglot-item c) :filterText)))
+                   cache))
+              (_ nil)))
+          :exit-function (lambda (_c _status)
+                           (push word lpy-nrepl-test--calls)))))
+
+(ert-deftest lpy-nrepl-test-capf-reasks-incomplete-server-per-input ()
+  ;; Defect: the table from the first capf call is kept for the whole
+  ;; corfu session, so `my-' is matched against the `my_var' filterText
+  ;; answered for `m', no LSP candidate is left and the popup blinks.
+  (with-temp-buffer
+    (insert "x m")
+    (setq lpy-nrepl-test--calls nil
+          lpy-nrepl-test--requests nil)
+    (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+              ((symbol-function 'eglot-completion-at-point)
+               #'lpy-nrepl-test--caching-eglot-capf)
+              ((symbol-function 'lpy-nrepl-completion-at-point)
+               (lambda ()
+                 (list (save-excursion (skip-chars-backward "a-z_-") (point))
+                       (point)
+                       (completion-table-dynamic (lambda (_) '("my-only")))
+                       :exclusive 'no))))
+      (pcase-let* ((`(,beg ,_ ,table . ,plist) (lpy-completion-at-point)))
+        (cl-flet ((corfu-update ()
+                    (let ((input (buffer-substring-no-properties beg (point))))
+                      (completion-metadata input table nil)
+                      (all-completions input table nil))))
+          (should (member "my-var" (corfu-update)))
+          (dolist (char '("y" "-" "v"))
+            (insert char)
+            (should (member "my-var" (corfu-update))))
+          ;; One request per distinct input; an unchanged input sends none.
+          (corfu-update)
+          (should (equal lpy-nrepl-test--requests '("my-v" "my-" "my" "m")))
+          ;; The exit function is the latest capf call's.
+          (funcall (plist-get plist :exit-function)
+                   (lpy-nrepl-test--find "my-var" (corfu-update)) 'finished)
+          (should (equal lpy-nrepl-test--calls '("my-v"))))))))
+
 (ert-deftest lpy-nrepl-test-merged-capf-single-source-is-unchanged ()
   ;; Defect: with one source missing the merge still wraps the other,
   ;; changing behaviour for users without eglot or without an nREPL.
@@ -667,15 +738,15 @@ EGLOT and NREPL are forms giving each stub's result."
         (nrepl (with-temp-buffer (insert "hea") (lpy-nrepl-test--nrepl-capf))))
     (lpy-nrepl-test--with-capfs eglot nrepl
       (cl-letf (((symbol-function 'eglot-managed-p) #'ignore))
-        (should (eq (lpy-completion-at-point) nrepl))))
+        (should (eq (lpy--merged-capf) nrepl))))
     (lpy-nrepl-test--with-capfs eglot nil
       ;; eglot alone keeps its table; only the annotations are shortened.
-      (let ((result (lpy-completion-at-point)))
+      (let ((result (lpy--merged-capf)))
         (should (eq (nth 2 result) (nth 2 eglot)))
         (should (eq (plist-get (nthcdr 3 result) :exit-function)
                     (plist-get (nthcdr 3 eglot) :exit-function)))))
     (lpy-nrepl-test--with-capfs nil nil
-      (should-not (lpy-completion-at-point)))))
+      (should-not (lpy--merged-capf)))))
 
 (defconst lpy-nrepl-test--pyrefly-nlargest
   '(:label "nlargest" :kind 3 :labelDetails nil

@@ -926,8 +926,8 @@ the nREPL's dotted names depend on it."
     (modify-syntax-entry ?. "." table)
     table))
 
-(defun lpy-completion-at-point ()
-  "Completion-at-point function for `lpy-mode' buffers.
+(defun lpy--merged-capf ()
+  "Return the merged capf result of the eglot and nREPL sources.
 Merges the candidates of `eglot-completion-at-point', when eglot manages
 the buffer, with those of `lpy-nrepl-completion-at-point', when an nREPL
 is connected.  A name both offer appears once, with eglot's docs and exit
@@ -935,13 +935,62 @@ function; names only the nREPL knows keep its annotation and kind.  Both
 sources are annotated with the kind's word (`lpy--completion-kinds');
 an LSP candidate's signature goes to the doc popup and the docsig line
 \(`lpy--shorten-eglot-capf').  Works with neither, either or both
-sources available."
+sources available; a lone source is returned unmerged."
   (lpy--merge-capf-results
    (lpy--shorten-eglot-capf
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
          (with-syntax-table (lpy--lsp-syntax-table)
            (eglot-completion-at-point))))
    (lpy-nrepl-completion-at-point)))
+
+(defun lpy--rerunning-capf (capf)
+  "Call CAPF and return its result with a table that re-runs CAPF.
+eglot caches the server's answer inside each table it returns, and
+corfu keeps one table for its whole session, so an answer the server
+marked isIncomplete would never be re-asked while typing.  The returned
+table re-calls CAPF whenever the text between the bounds has changed
+and, when the new result has the same bounds, uses its table and swaps
+its properties into the returned plist in place (`completion-at-point'
+and corfu hold that very list).  A re-run with no result or other
+bounds keeps the old table, so the next call retries.  Modelled on
+cape's `cape-wrap-buster'."
+  (pcase (funcall capf)
+    (`(,beg ,end ,table . ,plist)
+     (let* ((buffer (current-buffer))
+            (beg (copy-marker beg))
+            (end (copy-marker end t))
+            (input (buffer-substring-no-properties beg end))
+            ;; A fixed head, so a re-run can replace the rest in place.
+            (plist `(:lpy--rerun t . ,plist)))
+       `(,(marker-position beg) ,(marker-position end)
+         ,(lambda (str pred action)
+            ;; Re-run on any action, not only `t' as cape does: corfu
+            ;; reads the metadata before the candidates, and the merged
+            ;; sorter classifies candidates by the merge that produced
+            ;; them.  eglot fetches lazily in its table, so the request
+            ;; is sent at the candidates call, inside corfu's
+            ;; interruptible update.
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (let ((new-input (buffer-substring-no-properties beg end)))
+                  (unless (equal input new-input)
+                    (pcase (let (completion-ignore-case completion-regexp-list)
+                             (funcall capf))
+                      ((and `(,new-beg ,new-end ,new-table . ,new-plist)
+                            (guard (and (= beg new-beg) (= end new-end))))
+                       (let (throw-on-input) ; No interrupt mid-update.
+                         (setq table new-table
+                               input new-input)
+                         (setcdr (cdr plist) new-plist))))))))
+            (complete-with-action action table str pred))
+         ,@plist)))))
+
+(defun lpy-completion-at-point ()
+  "Completion-at-point function for `lpy-mode' buffers.
+Merges eglot's LSP candidates with the nREPL's (`lpy--merged-capf'),
+re-running the merge as the typed word changes (`lpy--rerunning-capf'),
+so candidates follow the server on every keystroke."
+  (lpy--rerunning-capf #'lpy--merged-capf))
 
 ;;; Eldoc (nREPL-backed)
 
