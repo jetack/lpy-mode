@@ -20,10 +20,9 @@
 (require 'lpy-nrepl)
 
 (ert-deftest lpy-nrepl-test-kind-annotation ()
-  (dolist (case '(("class" . " class") ("function" . " fn")
-                  ("variable" . " var") ("macro" . " macro")
-                  ("keyword" . " kw")))
-    (should (equal (lpy-nrepl--kind-annotation (car case)) (cdr case))))
+  ;; Defect: a kind the nREPL `complete' op returns gets no annotation.
+  (dolist (kind '("class" "function" "variable" "macro" "keyword"))
+    (should (lpy-nrepl--kind-annotation kind)))
   (should-not (lpy-nrepl--kind-annotation "mystery"))
   (should-not (lpy-nrepl--kind-annotation nil)))
 
@@ -41,7 +40,7 @@
          (kinds (alist-get 'kinds msg)))
     (should (equal (lpy-nrepl--kind-annotation
                     (lpy-nrepl--kinds-lookup kinds "os.path"))
-                   " var"))))
+                   " variable"))))
 
 (ert-deftest lpy-nrepl-test-lsp-and-nrepl-kinds-share-tags ()
   ;; Defect: the LSP and nREPL kind vocabularies drift, so one list shows
@@ -50,8 +49,14 @@
                   (14 . "keyword")))
     (let ((tag (lpy-nrepl--kind-annotation (cdr case))))
       (should tag)
-      (should (equal (lpy--kind-annotation (alist-get (car case) lpy--lsp-kinds))
+      (should (equal (lpy--kind-annotation (gethash (car case) lpy--lsp-kinds))
                      tag)))))
+
+(ert-deftest lpy-nrepl-test-every-lsp-kind-is-annotated ()
+  ;; Defect: an LSP kind missing from the table (Snippet, Operator, ...)
+  ;; is listed with no annotation, where eglot showed its kind name.
+  (cl-loop for number from 1 to 25
+           do (should (lpy--kind-annotation (gethash number lpy--lsp-kinds)))))
 
 (defmacro lpy-nrepl-test--with-project (port-text &rest body)
   "Run BODY in a temp project/sub dir; write PORT-TEXT to root's port file."
@@ -641,7 +646,7 @@ EGLOT and NREPL are forms giving each stub's result."
       (let ((heapify (lpy-nrepl-test--find "heapify" cands)))
         (should (get-text-property 0 'eglot--lsp-item heapify))
         (should (equal (funcall (plist-get plist :annotation-function) heapify)
-                       " fn"))
+                       " function"))
         (funcall (plist-get plist :exit-function) heapify 'finished)
         (funcall (plist-get plist :company-doc-buffer) heapify)
         (should (equal lpy-nrepl-test--calls
@@ -743,7 +748,7 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
   ;; Defect: the item's multi-line `detail' (the whole overload set) is
   ;; shown beside the candidate, as eglot's own annotation does.
   (lpy-nrepl-test--with-item lpy-nrepl-test--pyrefly-nlargest
-    (should (equal (funcall annotate cand) " fn"))))
+    (should (equal (funcall annotate cand) " function"))))
 
 (ert-deftest lpy-nrepl-test-lsp-annotation-prefers-label-description ()
   ;; Defect: a server's own short tag (labelDetails.description) is
@@ -768,7 +773,7 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
 (ert-deftest lpy-nrepl-test-lsp-without-detail-keeps-eglot-docs ()
   ;; Defect: an item without a signature loses eglot's own docs or docsig.
   (lpy-nrepl-test--with-item '(:label "nl" :kind 6)
-    (should (equal (funcall annotate cand) " var"))
+    (should (equal (funcall annotate cand) " variable"))
     (should (equal (with-current-buffer (funcall doc-buffer cand)
                      (buffer-string))
                    "Return the n largest elements. DOCS"))

@@ -596,26 +596,49 @@ resolved in the buffer file's scope (the session scope without a file)."
     nil))
 
 (defconst lpy--completion-kinds
-  '((class " class" class)
-    (function " fn" function)
+  '((text " text" text)
     (method " method" method)
+    (function " function" function)
+    (constructor " constructor" constructor)
     (field " field" field)
-    (variable " var" variable)
-    (module " mod" module)
-    (type " type" type-parameter)
-    (macro " macro" function)
-    (keyword " kw" keyword))
+    (variable " variable" variable)
+    (class " class" class)
+    (interface " interface" interface)
+    (module " module" module)
+    (property " property" property)
+    (unit " unit" unit)
+    (value " value" value)
+    (enum " enum" enum)
+    (keyword " keyword" keyword)
+    (snippet " snippet" snippet)
+    (color " color" color)
+    (file " file" file)
+    (reference " reference" reference)
+    (folder " folder" folder)
+    (enum-member " enum member" enum-member)
+    (constant " constant" constant)
+    (struct " struct" struct)
+    (event " event" event)
+    (operator " operator" operator)
+    (type-parameter " type parameter" type-parameter)
+    (macro " macro" function))
   "Each completion kind as (KIND ANNOTATION COMPANY-KIND).
 The one vocabulary of candidate annotations: nREPL candidates (whose
 kind names are the KIND symbols) and LSP candidates (through
-`lpy--lsp-kinds') both resolve through it.")
+`lpy--lsp-kinds') both resolve through it.  Annotations are the full
+lowercase kind word, as JupyterLab, elpy and nvim-cmp show it.")
 
 (defconst lpy--lsp-kinds
-  '((2 . method) (3 . function) (4 . class) (5 . field) (6 . variable)
-    (7 . class) (8 . class) (9 . module) (10 . field) (12 . variable)
-    (13 . class) (14 . keyword) (20 . variable) (21 . variable)
-    (22 . class) (25 . type))
-  "The `lpy--completion-kinds' kind of each LSP CompletionItemKind.")
+  (let ((kinds (make-hash-table)))
+    (cl-loop for kind in '(text method function constructor field variable
+                           class interface module property unit value enum
+                           keyword snippet color file reference folder
+                           enum-member constant struct event operator
+                           type-parameter)
+             for number from 1
+             do (puthash number kind kinds))
+    kinds)
+  "The `lpy--completion-kinds' kind of each LSP CompletionItemKind number.")
 
 (defun lpy--kind-annotation (kind)
   "Return the annotation for KIND, a `lpy--completion-kinds' symbol."
@@ -808,7 +831,7 @@ overload set there, which LSP means for the focused item only."
   (let ((desc (plist-get (plist-get item :labelDetails) :description)))
     (if (and (stringp desc) (not (string-empty-p desc)))
         (concat " " desc)
-      (lpy--kind-annotation (alist-get (plist-get item :kind) lpy--lsp-kinds)))))
+      (lpy--kind-annotation (gethash (plist-get item :kind) lpy--lsp-kinds)))))
 
 (defun lpy--signature-doc-buffer (sig docs)
   "Return a doc buffer showing SIG above DOCS, a buffer, (BUFFER . POS) or nil."
