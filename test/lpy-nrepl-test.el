@@ -746,7 +746,7 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
 (ert-deftest lpy-nrepl-test-lsp-annotation-prefers-label-description ()
   ;; Defect: a server's own short tag (labelDetails.description) is
   ;; replaced by the generic kind tag.
-  (lpy-nrepl-test--with-item '(:label "defn" :kind 14 :detail "special form"
+  (lpy-nrepl-test--with-item '(:label "defn" :kind 14 :detail "(defn name args)"
                                :labelDetails (:description "special form"))
     (should (equal (funcall annotate cand) " special form"))))
 
