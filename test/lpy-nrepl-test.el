@@ -541,6 +541,156 @@ buffer without a file; bind `lpy-file' to the first one's exact path."
         (should-not (cl-some (lambda (ov) (overlay-get ov 'lpy-nrepl))
                              (overlays-in (point-min) (point-max))))))))
 
+;;; Merged completion (LSP + nREPL)
+
+(defvar lpy-nrepl-test--calls nil
+  "Calls recorded by the stub capfs, newest first.")
+
+(defun lpy-nrepl-test--eglot-capf ()
+  "Stub of `eglot-completion-at-point' over the word before point.
+Its table matches flexibly, like eglot's: \"theap\" matches \"hea\"."
+  (let* ((end (point))
+         (beg (save-excursion (skip-chars-backward "a-z") (point)))
+         (cands (list (propertize "heapify" 'eglot--lsp-item '(:label "heapify"))
+                      (propertize "heap" 'eglot--lsp-item '(:label "heap"))
+                      (propertize "theap" 'eglot--lsp-item '(:label "theap")))))
+    (list beg end
+          (lambda (str _pred action)
+            (pcase action
+              ('metadata
+               `(metadata (category . eglot-capf)
+                          (display-sort-function
+                           . ,(lambda (cs) (sort (copy-sequence cs) #'string<)))))
+              ('t (cl-remove-if-not
+                   (lambda (c) (string-match-p (regexp-quote str) c)) cands))
+              (_ nil)))
+          :annotation-function (lambda (_c) " [sig]")
+          :exit-function (lambda (c status)
+                           (push (list 'eglot-exit c status) lpy-nrepl-test--calls))
+          :company-doc-buffer (lambda (c)
+                                (push (list 'eglot-doc c) lpy-nrepl-test--calls)
+                                nil)
+          :company-prefix-length t)))
+
+(defun lpy-nrepl-test--nrepl-capf ()
+  "Stub of `lpy-nrepl-completion-at-point' over the word before point."
+  (let* ((end (point))
+         (beg (save-excursion (skip-chars-backward "a-z") (point))))
+    (list beg end
+          (completion-table-dynamic
+           (lambda (_) (list "heapify" "heappush" "heappush" "head")))
+          :annotation-function (lambda (_c) " fn")
+          :company-kind (lambda (c)
+                          (push (list 'nrepl-kind c) lpy-nrepl-test--calls)
+                          'function)
+          :exclusive 'no)))
+
+(defmacro lpy-nrepl-test--with-capfs (eglot nrepl &rest body)
+  "Run BODY after \"hea\" with the eglot and nREPL capfs stubbed.
+EGLOT and NREPL are forms giving each stub's result."
+  (declare (indent 2))
+  `(with-temp-buffer
+     (insert "x hea")
+     (setq lpy-nrepl-test--calls nil)
+     (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+               ((symbol-function 'eglot-completion-at-point)
+                (lambda () ,eglot))
+               ((symbol-function 'lpy-nrepl-completion-at-point)
+                (lambda () ,nrepl)))
+       ,@body)))
+
+(defun lpy-nrepl-test--find (name cands)
+  "Return the string in CANDS equal to NAME."
+  (cl-find name cands :test #'equal))
+
+(ert-deftest lpy-nrepl-test-merged-capf-dedupes-to-eglot-candidate ()
+  ;; Defect: a name both sources offer is listed twice, or the merged list
+  ;; keeps nREPL's copy so eglot's docs and exit function never run.
+  (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
+      (lpy-nrepl-test--nrepl-capf)
+    (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))
+                 (cands (funcall table "hea" nil t)))
+      (should (= 1 (cl-count "heapify" cands :test #'equal)))
+      (should (= 1 (cl-count "heapify" (all-completions "hea" table nil)
+                             :test #'equal)))
+      (let ((heapify (lpy-nrepl-test--find "heapify" cands)))
+        (should (get-text-property 0 'eglot--lsp-item heapify))
+        (should (equal (funcall (plist-get plist :annotation-function) heapify)
+                       " [sig]"))
+        (funcall (plist-get plist :exit-function) heapify 'finished)
+        (funcall (plist-get plist :company-doc-buffer) heapify)
+        (should (equal lpy-nrepl-test--calls
+                       `((eglot-doc ,heapify) (eglot-exit ,heapify finished)))))
+      ;; eglot's own keys carry over.
+      (should (eq (plist-get plist :company-prefix-length) t)))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-keeps-nrepl-only-names ()
+  ;; Defect: names only the nREPL knows are dropped, listed twice, or
+  ;; annotated by eglot's function (which knows nothing of them).
+  (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
+      (lpy-nrepl-test--nrepl-capf)
+    (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))
+                 (cands (funcall table "hea" nil t)))
+      (should (= 1 (cl-count "heappush" cands :test #'equal)))
+      (should (member "head" cands))
+      (should (equal (funcall (plist-get plist :annotation-function) "head")
+                     " fn"))
+      (should (eq (funcall (plist-get plist :company-kind) "head") 'function))
+      (should (equal lpy-nrepl-test--calls '((nrepl-kind "head"))))
+      ;; A property only nREPL provides yields nil for eglot's candidates.
+      (should-not (funcall (plist-get plist :company-kind)
+                           (lpy-nrepl-test--find "heap" cands))))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-sorts-eglot-first ()
+  ;; Defect: the merged sort interleaves the sources, or eglot's own
+  ;; ranking is discarded.
+  (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
+      (lpy-nrepl-test--nrepl-capf)
+    (pcase-let* ((`(,beg ,end ,table . ,_) (lpy-completion-at-point))
+                 (meta (completion-metadata
+                        (buffer-substring beg end) table nil))
+                 (sort-fn (completion-metadata-get meta 'display-sort-function))
+                 (cands (funcall table "hea" nil t)))
+      (should (eq (completion-metadata-get meta 'category) 'eglot-capf))
+      (should (equal (funcall sort-fn (reverse cands))
+                     '("heap" "heapify" "theap" "head" "heappush"))))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-keeps-eglot-flex-matches ()
+  ;; Defect: the merged table re-filters by prefix, dropping eglot's flex
+  ;; (non-prefix) matches.
+  (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
+      (lpy-nrepl-test--nrepl-capf)
+    (let ((table (nth 2 (lpy-completion-at-point))))
+      (should (member "theap" (funcall table "hea" nil t))))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-single-source-is-unchanged ()
+  ;; Defect: with one source missing the merge still wraps the other,
+  ;; changing behaviour for users without eglot or without an nREPL.
+  (let ((eglot (with-temp-buffer (insert "hea") (lpy-nrepl-test--eglot-capf)))
+        (nrepl (with-temp-buffer (insert "hea") (lpy-nrepl-test--nrepl-capf))))
+    (lpy-nrepl-test--with-capfs eglot nrepl
+      (cl-letf (((symbol-function 'eglot-managed-p) #'ignore))
+        (should (eq (lpy-completion-at-point) nrepl))))
+    (lpy-nrepl-test--with-capfs eglot nil
+      (should (eq (lpy-completion-at-point) eglot)))
+    (lpy-nrepl-test--with-capfs nil nil
+      (should-not (lpy-completion-at-point)))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-different-starts-keep-main ()
+  ;; Defect: candidates completing different prefixes are mixed.
+  (let ((main (list 3 5 '("heap")))
+        (extra (list 1 5 '("x.heap"))))
+    (should (eq (lpy--merge-capf-results main extra) main))))
+
+(ert-deftest lpy-nrepl-test-lpy-mode-capf-runs-before-eglot ()
+  ;; Defect: eglot's capf, added at depth 0 when it manages the buffer,
+  ;; runs first and shadows the merged one, so nREPL names never appear.
+  (with-temp-buffer
+    (lpy-mode)
+    (add-hook 'completion-at-point-functions #'eglot-completion-at-point nil t)
+    (should (eq (car completion-at-point-functions) #'lpy-completion-at-point))
+    (should (memq #'eglot-completion-at-point completion-at-point-functions))))
+
 (provide 'lpy-nrepl-test)
 
 ;;; lpy-nrepl-test.el ends here

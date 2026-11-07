@@ -312,9 +312,13 @@ Teach paredit not to insert a space before `\"' after a Python string prefix
 ;;;; IDE support (nREPL-backed)
 
 (defun lpy-mode--setup-completion ()
-  "Add nREPL completion-at-point function."
+  "Add `lpy-completion-at-point', which merges eglot and nREPL candidates.
+The negative depth keeps it ahead of `eglot-completion-at-point', which
+eglot adds buffer-locally at depth 0 when it manages the buffer; ours
+already includes eglot's candidates, so eglot's own capf is reached only
+when ours returns nil."
   (add-hook 'completion-at-point-functions
-            #'lpy-nrepl-completion-at-point nil t))
+            #'lpy-completion-at-point -50 t))
 
 (defun lpy-mode--setup-eldoc ()
   "Add nREPL-backed eldoc support."
