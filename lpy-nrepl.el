@@ -465,7 +465,7 @@ Sends the buffer text directly as an eval operation."
 (defun lpy-nrepl-macroexpand ()
   "Macroexpand the form at point via nREPL.
 The expansion is displayed in a `*lpy-macroexpand*' buffer and is
-resolved in the buffer file's scope."
+resolved in the buffer file's scope (the session scope without a file)."
   (interactive)
   (-when-let (code (or (lpy--current-form-string)
                        (lpy--last-sexp-string)))
@@ -529,7 +529,7 @@ resolved in the buffer file's scope."
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
 annotated with the kind the server reports for them.  Candidates come
-from the buffer file's scope."
+from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
            (start (save-excursion
@@ -570,7 +570,7 @@ from the buffer file's scope."
 (defun lpy-nrepl-eldoc-function (callback &rest _ignored)
   "Eldoc function that queries nREPL for documentation.
 Calls CALLBACK with the docs string when available.  The symbol is
-looked up in the buffer file's scope."
+looked up in the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let ((symbol (or (thing-at-point 'symbol t)
                       (save-excursion

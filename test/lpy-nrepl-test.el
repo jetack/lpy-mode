@@ -345,7 +345,9 @@ The stubbed send records each message and answers it with a canned response."
 
 (ert-deftest lpy-nrepl-test-complete-sends-file ()
   (let ((msgs (lpy-nrepl-test--with-sent "/tmp/a.lpy"
-                (all-completions "fo" (nth 2 (lpy-nrepl-completion-at-point))))))
+                ;; The table runs in a buffer with no file, like a minibuffer.
+                (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
+                  (with-temp-buffer (all-completions "fo" table))))))
     (should (equal (lpy-nrepl-test--file-of msgs "complete")
                    '(file . "/tmp/a.lpy")))))
 
