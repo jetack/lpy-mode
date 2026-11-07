@@ -19,39 +19,6 @@
                (file-name-directory (or load-file-name buffer-file-name)))))
 (require 'lpy-nrepl)
 
-(ert-deftest lpy-nrepl-test-kind-annotation ()
-  ;; Defect: a name from the fallback `kinds' field gets no annotation.
-  (dolist (kind '("class" "function" "variable" "macro" "keyword"))
-    (should (lpy-nrepl--kind-annotation kind)))
-  (should-not (lpy-nrepl--kind-annotation "mystery"))
-  (should-not (lpy-nrepl--kind-annotation nil)))
-
-(ert-deftest lpy-nrepl-test-kinds-lookup ()
-  ;; json-parse-string :object-type 'alist interns keys as symbols.
-  (let ((kinds '((foo . "function") (os.path . "variable"))))
-    (should (equal (lpy-nrepl--kinds-lookup kinds "foo") "function"))
-    (should (equal (lpy-nrepl--kinds-lookup kinds "os.path") "variable"))
-    (should-not (lpy-nrepl--kinds-lookup kinds "absent"))
-    (should-not (lpy-nrepl--kinds-lookup nil "foo"))))
-
-(ert-deftest lpy-nrepl-test-kinds-from-parsed-response ()
-  (let* ((line "{\"op\":\"complete-result\",\"completions\":[\"os.path\"],\"kinds\":{\"os.path\":\"variable\"}}")
-         (msg (json-parse-string line :object-type 'alist))
-         (kinds (alist-get 'kinds msg)))
-    (should (equal (lpy-nrepl--kind-annotation
-                    (lpy-nrepl--kinds-lookup kinds "os.path"))
-                   " variable"))))
-
-(ert-deftest lpy-nrepl-test-lsp-and-nrepl-kinds-share-tags ()
-  ;; Defect: the LSP and nREPL kind vocabularies drift, so one list shows
-  ;; the same kind of name under two tags.
-  (dolist (case '((3 . "function") (7 . "class") (6 . "variable")
-                  (14 . "keyword")))
-    (let ((tag (lpy-nrepl--kind-annotation (cdr case))))
-      (should tag)
-      (should (equal (lpy--kind-annotation (gethash (car case) lpy--lsp-kinds))
-                     tag)))))
-
 (ert-deftest lpy-nrepl-test-every-lsp-kind-is-annotated ()
   ;; Defect: an LSP kind missing from the table (Snippet, Operator, ...)
   ;; is listed with no annotation, where eglot showed its kind name.
@@ -335,7 +302,7 @@ The stubbed send records each message and answers it with a canned response."
                 (lambda (msg &optional callback)
                   (push msg sent)
                   (when callback
-                    (funcall callback '((completions . []) (docs . "d")
+                    (funcall callback '((items . []) (docs . "d")
                                         (expansion . "x"))))))
                ((symbol-function 'lpy-nrepl--display-macroexpand-result)
                 #'ignore)
@@ -390,8 +357,8 @@ The stubbed send records each message and answers it with a canned response."
                (lambda (_msg &optional callback)
                  (cl-incf sends)
                  (funcall callback
-                          '((completions . ["heapify" "heappush"])
-                            (kinds . ((heapify . "function"))))))))
+                          `((items . [,(lpy-nrepl-test--item "heapify" 3)
+                                      ,(lpy-nrepl-test--item "heappush" 3)]))))))
       (with-temp-buffer
         (insert "hea")
         (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
@@ -878,8 +845,8 @@ SENT is set to the prefix the client asked for."
   ;; cannot line up with LSP's start and the merge drops them.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        '((completions . ["heapq.nlargest" "heapq.nsmallest"])
-          (kinds . ((heapq.nlargest . "function"))))
+        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)
+                    ,(lpy-nrepl-test--item "heapq.nsmallest" 2)]))
       (with-temp-buffer
         (insert "(import heapq)\nheapq.n")
         (let* ((res (lpy-nrepl-completion-at-point))
@@ -897,7 +864,8 @@ SENT is set to the prefix the client asked for."
 (ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
   ;; Defect: `heapq.' starts at the whole symbol instead of at point.
   (let (sent)
-    (lpy-nrepl-test--with-reply sent '((completions . ["heapq.nlargest"]))
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)]))
       (with-temp-buffer
         (insert "heapq.")
         (let ((res (lpy-nrepl-completion-at-point)))
@@ -911,7 +879,8 @@ SENT is set to the prefix the client asked for."
   (require 'lpy-mode)
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        '((completions . ["heapq.nlargest" "heapq.nlx_runtime"]))
+        `((items . [,(lpy-nrepl-test--item "heapq.nlargest" 3)
+                    ,(lpy-nrepl-test--item "heapq.nlx_runtime" 6)]))
       (with-temp-buffer
         (lpy-mode)
         (insert "(import heapq)\nheapq.nl")
@@ -971,22 +940,13 @@ SENT is set to the prefix the client asked for."
           (should (equal sent "heapq.n")))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-vector-is-present ()
-  ;; Defect: converting `items' to a list before testing for its presence
-  ;; ((append [] nil) is nil) makes an empty reply fall back to `completions'.
+  ;; Defect: an empty `items' reply lists candidates from another field.
   (let (sent)
     (lpy-nrepl-test--with-reply sent
-        '((items . []) (completions . ["foo"]) (kinds . ((foo . "function"))))
+        '((items . []) (completions . ["foo"]))
       (with-temp-buffer
         (insert "fo")
         (should-not (all-completions "fo" (nth 2 (lpy-nrepl-completion-at-point))))))))
-
-(ert-deftest lpy-nrepl-test-items-win-over-kinds ()
-  (let (sent)
-    (lpy-nrepl-test--with-reply sent
-        `((items . [,(lpy-nrepl-test--item "foo" 7)])
-          (completions . ["foo"]) (kinds . ((foo . "function"))))
-      (should (equal (lpy-nrepl-test--annotations "fo" "foo")
-                     '((" class" . class)))))))
 
 (ert-deftest lpy-nrepl-test-items-empty-description-uses-kind-word ()
   ;; Defect: a description of "" shown as a blank annotation instead of
