@@ -827,7 +827,9 @@ The capf result is `lpy-completion-at-point''s over an eglot stub."
 (ert-deftest lpy-nrepl-test-capf-dotted-bounds-live ()
   ;; Same defect against real eglot and the real lispython server.
   (let ((python (getenv "LPY_TEST_LSP_PYTHON")))
-    (skip-unless (and python (file-executable-p python)))
+    (skip-unless (and python (file-executable-p python)
+                      (zerop (call-process python nil nil nil
+                                           "-c" "import lispy.lsp"))))
     (require 'eglot)
     (require 'lpy-mode)
     (let* ((dir (file-name-as-directory (make-temp-file "lpy-lsp-" t)))
@@ -889,10 +891,13 @@ SENT is set to the prefix the client asked for."
           (should (equal (all-completions "n" table)
                          '("nlargest" "nsmallest")))
           (should (equal (funcall annotate "nlargest") " function"))
+          (should (eq (funcall (plist-get (nthcdr 3 res) :company-kind)
+                               "nlargest")
+                      'function))
           (should (equal sent "heapq.n")))))))
 
 (ert-deftest lpy-nrepl-test-dotted-capf-empty-word-after-dot ()
-  ;; Defect: `heapq.' (nothing typed after the dot) requests nothing.
+  ;; Defect: `heapq.' starts at the whole symbol instead of at point.
   (let (sent)
     (lpy-nrepl-test--with-dotted-send sent ["heapq.nlargest"] nil
       (with-temp-buffer
