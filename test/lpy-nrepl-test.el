@@ -376,20 +376,25 @@ The stubbed send records each message and answers it with a canned response."
 (require 'lpy-mode)
 
 (ert-deftest lpy-nrepl-test-eval-string-sends-scope-as-ns ()
-  (let ((lpy-nrepl--scope "/tmp/a.lpy"))
+  (let ((lpy-nrepl--scope "/tmp/a.lpy")
+        (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-evalstr*"))
     (let ((msg (car (lpy-nrepl-test--with-sent nil
                       (lpy-nrepl-eval-string "  (+ 1 2) ")))))
       (should (equal (alist-get 'code msg) "(+ 1 2)"))
-      (should (equal (alist-get lpy-nrepl--ns-field msg) "/tmp/a.lpy"))
-      (dolist (k '(file line column)) (should-not (assq k msg))))))
+      ;; Literal key: the server contract.
+      (should (equal (alist-get 'ns msg) "/tmp/a.lpy"))
+      (dolist (k '(file line column)) (should-not (assq k msg))))
+    (kill-buffer lpy-nrepl--repl-buffer-name)))
 
 (ert-deftest lpy-nrepl-test-eval-string-main-scope-sends-no-scope ()
   ;; Even from a file buffer: the string eval is not the buffer's.
   (let* ((lpy-nrepl--scope nil)
+         (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-evalstr*")
          (msg (car (lpy-nrepl-test--with-sent "/tmp/a.lpy"
                      (lpy-nrepl-eval-string "x")))))
-    (dolist (k (list lpy-nrepl--ns-field 'file 'line 'column))
-      (should-not (assq k msg)))))
+    (dolist (k '(ns file line column))
+      (should-not (assq k msg)))
+    (kill-buffer lpy-nrepl--repl-buffer-name)))
 
 (ert-deftest lpy-nrepl-test-eval-string-blank-errors ()
   (lpy-nrepl-test--with-sent nil
@@ -426,17 +431,41 @@ buffer without a file; bind `lpy-file' to the first one's exact path."
       (cl-letf (((symbol-function 'completing-read)
                  (lambda (_prompt coll &rest _)
                    (setq offered (mapcar #'car coll))
-                   (car (car coll)))))
+                   (car (cadr coll)))))
         (lpy-nrepl-set-file-scope))
-      (should (equal offered (list (abbreviate-file-name lpy-file))))
+      (should (equal offered (list "__main__" (abbreviate-file-name lpy-file))))
       (should (equal lpy-nrepl--scope lpy-file)))))
 
-(ert-deftest lpy-nrepl-test-set-file-scope-empty-resets-to-main ()
+(ert-deftest lpy-nrepl-test-set-file-scope-main-resets-to-main ()
   (lpy-nrepl-test--with-scope-buffers
-    (setq lpy-nrepl--scope lpy-file)
-    (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) "")))
-      (lpy-nrepl-set-file-scope))
+    (dolist (reply '("__main__" ""))
+      (setq lpy-nrepl--scope lpy-file)
+      (cl-letf (((symbol-function 'completing-read) (lambda (&rest _) reply)))
+        (lpy-nrepl-set-file-scope))
+      (should-not lpy-nrepl--scope))))
+
+(ert-deftest lpy-nrepl-test-set-file-scope-defaults-to-main ()
+  ;; Vertico preselects candidate 0 without a DEF; RET must mean __main__.
+  (lpy-nrepl-test--with-scope-buffers
+    (let (def)
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_p _c _pred _rm _init _hist d) (setq def d) "")))
+        (lpy-nrepl-set-file-scope))
+      (should (equal def "__main__")))))
+
+(ert-deftest lpy-nrepl-test-connection-swap-clears-scope ()
+  (let ((lpy-nrepl--scope "/tmp/a.lpy")
+        (lpy-nrepl--connection nil))
+    (lpy-nrepl--swap-connection nil)
     (should-not lpy-nrepl--scope)))
+
+(ert-deftest lpy-nrepl-test-mode-line-label-escapes-percent ()
+  (let ((lpy-nrepl--scope "/tmp/50%.lpy")
+        (lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-pct*"))
+    (unwind-protect
+        (with-current-buffer (lpy-nrepl--repl-buffer)
+          (should (equal (eval (cadr mode-line-process) t) " [50%%.lpy]")))
+      (kill-buffer lpy-nrepl--repl-buffer-name))))
 
 (ert-deftest lpy-nrepl-test-scope-shown-in-log-and-mode-line ()
   (lpy-nrepl-test--with-scope-buffers

@@ -92,6 +92,9 @@ Each callback is a function taking one argument: the parsed JSON response.")
 (defvar lpy-nrepl--scope nil
   "File path whose scope `lpy-nrepl-eval-string' uses, or nil for `__main__'.")
 
+(defconst lpy-nrepl--main-scope-label "__main__"
+  "Display name of the session's default scope (`lpy-nrepl--scope' nil).")
+
 (defconst lpy-nrepl--ns-field 'ns
   "Name of the nREPL request field selecting a file's scope.
 Unlike `file' it does not rename the eval; the one home of the key.")
@@ -109,7 +112,7 @@ Unlike `file' it does not rename the eval; the one home of the key.")
 (defun lpy-nrepl--scope-label (&optional full)
   "Return a display string for `lpy-nrepl--scope'.
 With FULL, abbreviate the whole path instead of keeping the file name."
-  (cond ((null lpy-nrepl--scope) "__main__")
+  (cond ((null lpy-nrepl--scope) lpy-nrepl--main-scope-label)
         (full (abbreviate-file-name lpy-nrepl--scope))
         (t (file-name-nondirectory lpy-nrepl--scope))))
 
@@ -265,6 +268,10 @@ connection, so it must no longer see the old process as current."
   (let ((old lpy-nrepl--connection))
     (setq lpy-nrepl--connection new)
     (setq lpy-nrepl--pending-callbacks nil)
+    ;; A new or restarted server holds no state for the chosen file scope;
+    ;; string evals would otherwise silently run in an empty scope.
+    (setq lpy-nrepl--scope nil)
+    (force-mode-line-update t)
     (when old
       (delete-process old))))
 
@@ -431,9 +438,11 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
   "Choose the file scope for `lpy-nrepl-eval-string'.
 Pick among the open `lpy-mode' file buffers; empty input selects `__main__'."
   (interactive)
-  (let* ((alist (lpy-nrepl--scope-candidates))
-         (choice (completing-read "File scope (empty for __main__): "
-                                  alist nil t)))
+  ;; An explicit first candidate and DEF: with require-match and no default,
+  ;; vertico preselects candidate 0, so RET would pick the first file.
+  (let* ((main lpy-nrepl--main-scope-label)
+         (alist (cons (cons main nil) (lpy-nrepl--scope-candidates)))
+         (choice (completing-read "File scope: " alist nil t nil nil main)))
     (lpy-nrepl--set-scope
      (and (not (string-empty-p choice)) (cdr (assoc choice alist))))))
 
@@ -733,7 +742,10 @@ Shows input sent to and output received from the nREPL server."
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
   (setq mode-line-process
-        '(:eval (concat " [" (lpy-nrepl--scope-label) "]"))))
+        '(:eval (concat " ["
+                  (replace-regexp-in-string "%" "%%" (lpy-nrepl--scope-label)
+                                            t t)
+                  "]"))))
 
 ;;; Provide:
 
