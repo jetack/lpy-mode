@@ -657,6 +657,11 @@ rule of eglot and nREPL candidates, so one kind displays identically."
   "Return the `:company-kind' of KIND-NUMBER, an LSP CompletionItemKind."
   (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
+(defconst lpy--augassign-operators
+  '("+=" "-=" "*=" "/=" "//=" "%=" "**=" "<<=" ">>=" "|=" "^=" "&=" "@=")
+  "The keys of lispython's `augassignop_dict' (src/lispy/core/utils.py).
+The reader reads these whole before peeling any prefix.")
+
 (defun lpy--completion-word-start ()
   "Return where the name being completed before point starts.
 The symbol is bounded by `lpy-mode-syntax-table', applied explicitly
@@ -665,8 +670,8 @@ lispython's reader (`token_parse' in src/lispy/core/parser.py): `,' is
 whitespace there, and the prefixes `^', `:', `*', `**' and a run of
 `+'/`-' before an alphanumeric, `_' or `.' are peeled off a token of two
 or more characters.  The reader strips these before the name, so the
-server never sees them as part of it.  `#', `|', `->foo' and `empty?'
-stay whole."
+server never sees them as part of it.  `#', `|', `->foo', `empty?' and
+the `lpy--augassign-operators' stay whole."
   (let ((end (point))
         (start (save-excursion
                  (with-syntax-table lpy-mode-syntax-table
@@ -677,6 +682,7 @@ stay whole."
         (setq start (1+ (point)))))
     (while (let ((token (buffer-substring-no-properties start end)))
              (and (>= (length token) 2)
+                  (not (member token lpy--augassign-operators))
                   (cond ((string-prefix-p "**" token) (cl-incf start 2))
                         ((memq (aref token 0) '(?^ ?: ?*)) (cl-incf start))
                         ((string-match "\\`[-+]+[[:alnum:]_.]" token)

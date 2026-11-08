@@ -1151,11 +1151,17 @@ SENT is set to the prefix the client asked for."
   (should (equal (lpy-nrepl-test--sent-and-offset "(f ^in") '("in" . 2)))
   (should (equal (lpy-nrepl-test--sent-and-offset "(f -ba") '("ba" . 2)))
   (should (equal (lpy-nrepl-test--sent-and-offset "(f #ba") '("#ba" . 3)))
-  (should (equal (lpy-nrepl-test--sent-and-offset "(f ->ba") '("->ba" . 4))))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f ->ba") '("->ba" . 4)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f :ke") '("ke" . 2)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f *ar") '("ar" . 2)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f **kw") '("kw" . 2)))
+  ;; An augmented-assignment operator is read whole, never peeled.
+  (should (equal (lpy-nrepl-test--sent-and-offset "(**=") '("**=" . 3))))
 
 (ert-deftest lpy-nrepl-test-comma-merge-keeps-nrepl-names ()
   ;; Defect: eglot's symbol bounds start at `,' while the nREPL source
   ;; starts after it, so the merge drops the nREPL-only name.
+  (require 'thingatpt)
   (skip-unless (boundp 'bounds-of-thing-at-point-provider-alist))
   (require 'lpy-mode)
   (let (sent)
