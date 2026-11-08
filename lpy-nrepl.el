@@ -657,6 +657,56 @@ rule of eglot and nREPL candidates, so one kind displays identically."
   "Return the `:company-kind' of KIND-NUMBER, an LSP CompletionItemKind."
   (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
+(defun lpy--completion-word-start ()
+  "Return where the name being completed before point starts.
+The symbol is bounded by `lpy-mode-syntax-table', applied explicitly
+because the buffer may be in another mode.  The start then follows
+lispython's reader (`token_parse' in src/lispy/core/parser.py): `,' is
+whitespace there, and the prefixes `^', `:', `*', `**' and a run of
+`+'/`-' before an alphanumeric, `_' or `.' are peeled off a token of two
+or more characters.  The reader strips these before the name, so the
+server never sees them as part of it.  `#', `|', `->foo' and `empty?'
+stay whole."
+  (let ((end (point))
+        (start (save-excursion
+                 (with-syntax-table lpy-mode-syntax-table
+                   (skip-syntax-backward "w_"))
+                 (point))))
+    (save-excursion
+      (when (search-backward "," start t)
+        (setq start (1+ (point)))))
+    (while (let ((token (buffer-substring-no-properties start end)))
+             (and (>= (length token) 2)
+                  (cond ((string-prefix-p "**" token) (cl-incf start 2))
+                        ((memq (aref token 0) '(?^ ?: ?*)) (cl-incf start))
+                        ((string-match "\\`[-+]+[[:alnum:]_.]" token)
+                         (cl-incf start (1- (match-end 0))))))))
+    start))
+
+(defun lpy--completion-start (word-start)
+  "Return the completion start for the name at WORD-START: after its last dot.
+LSP completes the word after the last dot, and the eglot and nREPL
+sources must share the start or `lpy--merge-capf-results' drops one."
+  (save-excursion
+    (if (search-backward "." word-start t)
+        (1+ (point))
+      word-start)))
+
+(defun lpy--completion-symbol-bounds ()
+  "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.
+START is the nREPL source's (`lpy--completion-start'); END is the end of
+the symbol after point under the current table, before any `,'.  Never
+nil, so no symbol yields (point . point), eglot's own fallback, and not
+the default symbol bounds."
+  (let ((start (lpy--completion-start (lpy--completion-word-start)))
+        (end (save-excursion
+               (let ((symbol-end (save-excursion (skip-syntax-forward "w_")
+                                                 (point))))
+                 (if (search-forward "," symbol-end t)
+                     (1- (point))
+                   symbol-end)))))
+    (cons start end)))
+
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
@@ -665,26 +715,12 @@ annotated from the LSP-shaped `items' the server reports (kind and
 from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
-           ;; The symbol is bounded by `lpy-mode-syntax-table'.  eglot's
-           ;; bounds come from `lpy--lsp-syntax-table', the same table with
-           ;; `.' as punctuation, and START below skips past the last `.',
-           ;; so names such as `empty?' or `->foo' start where eglot's do.
-           ;; Applied explicitly: the buffer may be in another mode.
-           (symbol-start (save-excursion
-                           (with-syntax-table lpy-mode-syntax-table
-                             (skip-syntax-backward "w_"))
-                           (point)))
+           (symbol-start (lpy--completion-word-start))
            (prefix (buffer-substring-no-properties symbol-start end))
-           ;; Complete the word after the last dot, as LSP does: both
-           ;; sources must share the start or `lpy--merge-capf-results'
-           ;; drops one.  HEAD (through the dot) only places START; the
-           ;; server gets the full dotted PREFIX and replies with labels
-           ;; that are already the word after the last dot, which is the
-           ;; text from START to point.  Candidates are those labels.
-           (head (if (string-match "\\(?:.*\\.\\)" prefix)
-                     (match-string 0 prefix)
-                   ""))
-           (start (+ symbol-start (length head)))
+           ;; The server gets the full dotted PREFIX and replies with
+           ;; labels that are already the word after the last dot, which
+           ;; is the text from START to point.  Candidates are those labels.
+           (start (lpy--completion-start symbol-start))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
            (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER . DESCRIPTION)
@@ -925,6 +961,8 @@ private.  pyrefly sends it up front."
                                         :company-docsig))
                      nconc (list key value)))))))
 
+(defvar bounds-of-thing-at-point-provider-alist) ; thingatpt, Emacs 30+
+
 (defun lpy--lsp-syntax-table ()
   "Return the buffer's syntax table with `.' as punctuation.
 eglot takes the completion bounds from `bounds-of-thing-at-point' on a
@@ -952,7 +990,13 @@ sources available; a lone source is returned unmerged."
    (lpy--shorten-eglot-capf
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
          (with-syntax-table (lpy--lsp-syntax-table)
-           (eglot-completion-at-point))))
+           ;; eglot's bounds are `bounds-of-thing-at-point' on a symbol;
+           ;; the provider gives them the nREPL source's start.  Emacs < 30
+           ;; ignores the alist and keeps the table's symbol bounds.
+           (let ((bounds-of-thing-at-point-provider-alist
+                  (cons (cons 'symbol #'lpy--completion-symbol-bounds)
+                        (bound-and-true-p bounds-of-thing-at-point-provider-alist))))
+             (eglot-completion-at-point)))))
    (lpy-nrepl-completion-at-point)))
 
 (defun lpy--candidate-generation (cand)

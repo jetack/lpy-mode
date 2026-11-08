@@ -1128,6 +1128,54 @@ SENT is set to the prefix the client asked for."
           (all-completions "" (nth 2 res)) ; triggers the fetch
           (should (equal sent "ok?")))))))
 
+(defun lpy-nrepl-test--sent-and-offset (text)
+  "Complete after TEXT in a temp buffer; return (SENT . POINT-MINUS-START)."
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "bar" 3)]))
+      (with-temp-buffer
+        (insert text)
+        (let ((res (lpy-nrepl-completion-at-point)))
+          (all-completions "" (nth 2 res)) ; triggers the fetch
+          (cons sent (- (point) (nth 0 res))))))))
+
+(ert-deftest lpy-nrepl-test-capf-comma-is-whitespace ()
+  ;; Defect: `,' is a symbol character in the mode table but whitespace to
+  ;; the reader, so `,ba' sent `,ba' and matched no name.
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f ,ba") '("ba" . 2)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(, a,ba") '("ba" . 2))))
+
+(ert-deftest lpy-nrepl-test-capf-reader-prefixes ()
+  ;; Defect: the reader peels `^' (annotation) and a sign before a name,
+  ;; so sending them finds nothing; `#' and `->' are part of the name.
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f ^in") '("in" . 2)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f -ba") '("ba" . 2)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f #ba") '("#ba" . 3)))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f ->ba") '("->ba" . 4))))
+
+(ert-deftest lpy-nrepl-test-comma-merge-keeps-nrepl-names ()
+  ;; Defect: eglot's symbol bounds start at `,' while the nREPL source
+  ;; starts after it, so the merge drops the nREPL-only name.
+  (skip-unless (boundp 'bounds-of-thing-at-point-provider-alist))
+  (require 'lpy-mode)
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "bar" 3)]))
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f ,ba")
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                  ((symbol-function 'eglot-completion-at-point)
+                   (lambda ()
+                     (let ((b (or (bounds-of-thing-at-point 'symbol)
+                                  (cons (point) (point)))))
+                       (list (car b) (cdr b) (list "baz"))))))
+          (let* ((res (lpy-completion-at-point))
+                 (names (all-completions "ba" (nth 2 res))))
+            (should (= (nth 0 res) (- (point) 2)))
+            (should (member "baz" names))
+            (should (member "bar" names))))))))
+
 (defun lpy-nrepl-test--annotations (text &rest names)
   "Complete TEXT in a temp buffer; return (ANNOTATION . COMPANY-KIND) per NAMES."
   (with-temp-buffer
