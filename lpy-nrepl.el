@@ -699,75 +699,162 @@ sources must share the start or `lpy--merge-capf-results' drops one."
         (1+ (point))
       word-start)))
 
+(defun lpy--completion-end ()
+  "Return where the completed word after point ends.
+The end of the symbol after point under `lpy--lsp-syntax-table' (so a
+`.' ends it, as the LSP text edit does), before any `,'.  The eglot and
+nREPL sources share this end, as they share `lpy--completion-start':
+`lpy--rerunning-capf' keeps a re-run only when its bounds are unchanged,
+so differing ends would keep a source that joins later out of the list."
+  (with-syntax-table (lpy--lsp-syntax-table)
+    (save-excursion
+      (let ((symbol-end (save-excursion (skip-syntax-forward "w_")
+                                        (point))))
+        (if (search-forward "," symbol-end t)
+            (1- (point))
+          symbol-end)))))
+
 (defun lpy--completion-symbol-bounds ()
   "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.
-START is the nREPL source's (`lpy--completion-start'); END is the end of
-the symbol after point under the current table, before any `,'.  Never
-nil, so no symbol yields (point . point), eglot's own fallback, and not
-the default symbol bounds."
-  (let ((start (lpy--completion-start (lpy--completion-word-start)))
-        (end (save-excursion
-               (let ((symbol-end (save-excursion (skip-syntax-forward "w_")
-                                                 (point))))
-                 (if (search-forward "," symbol-end t)
-                     (1- (point))
-                   symbol-end)))))
-    (cons start end)))
+The nREPL source's bounds: `lpy--completion-start' and
+`lpy--completion-end'.  Never nil, so no symbol yields (point . point),
+eglot's own fallback, and not the default symbol bounds."
+  (cons (lpy--completion-start (lpy--completion-word-start))
+        (lpy--completion-end)))
+
+(defconst lpy-nrepl--completion-category 'lpy-nrepl
+  "Completion category of the nREPL source's table.
+Its style is `lpy-nrepl-passthrough' (`completion-category-defaults').")
+
+(defun lpy-nrepl--passthrough-all (string table pred point)
+  "Return TABLE's own candidates for STRING up to POINT, filtered by PRED.
+The all-completions function of the `lpy-nrepl-passthrough' style."
+  (all-completions (substring string 0 point) table pred))
+
+(defun lpy-nrepl--passthrough-try (string table pred point)
+  "Complete STRING up to POINT as TABLE's own try-completion does.
+PRED filters the candidates.  The try-completion function of the
+`lpy-nrepl-passthrough' style: the rule is the table's
+\(`lpy-nrepl--matched-completion'), only reshaped to a style's answer.
+STRING is the whole word (the bounds end at `lpy--completion-end') and a
+completion replaces all of it, so the text after POINT is not kept; a
+try that makes no progress leaves STRING as it is."
+  (let* ((before (substring string 0 point))
+         (try (try-completion before table pred)))
+    (cond ((null try) nil) ; No match: later capfs and "No match" apply.
+          ;; BEFORE is the sole label; t only when nothing follows it.
+          ((eq try t) (if (equal before string) t (cons before point)))
+          ((equal try before) (cons string point))
+          (t (cons try (length try))))))
+
+(defun lpy-nrepl--matched-completion (str matched action)
+  "Answer completion ACTION for STR from MATCHED, the labels listed for STR.
+Try- and test-completion follow the listing, not a label prefix match:
+`completion--capf-wrapper' (default completion, company) drops a
+non-exclusive source whose `try-completion' is nil, which a label match
+would be at `my_v' for `my-var'.  Try-completion gives the sole match,
+the shared start when every match extends STR literally, and otherwise
+STR as typed (`m' for `MyClass' and `my-var')."
+  (pcase action
+    ('t matched)
+    ('lambda (and (member str matched) t))
+    (_ (cond ((null matched) nil)
+             ((equal matched (list str)) t)
+             ((null (cdr matched)) (car matched))
+             ((cl-every (lambda (label) (string-prefix-p str label)) matched)
+              (try-completion str matched))
+             (t str)))))
+
+;; The server matches the word (case and `-'/`_' insensitively), so the
+;; table already holds exactly the candidates; the user's style (basic,
+;; orderless) would re-filter the labels and drop `my-var' for `my_v'.
+;; The same arrangement as eglot's `eglot-capf' and `eglot--dumb-flex'.
+(add-to-list 'completion-styles-alist
+             '(lpy-nrepl-passthrough
+               lpy-nrepl--passthrough-try lpy-nrepl--passthrough-all
+               "List the candidates the completion table answers, unfiltered."))
+(add-to-list 'completion-category-defaults
+             `(,lpy-nrepl--completion-category (styles lpy-nrepl-passthrough)))
 
 (defun lpy-nrepl-completion-at-point ()
   "Completion-at-point function using nREPL.
 Works with corfu, company-capf, and default completion.  Candidates are
-annotated from the LSP-shaped `items' the server reports (kind and
-`labelDetails'), as eglot candidates are.  Candidates come
-from the buffer file's scope (the session scope without a file)."
+the server's `items' for the word, annotated from their kind and
+`labelDetails', as eglot candidates are.  The server matches the word
+and gives each item a `filterText' that starts with the word as typed;
+the table lists the labels whose filterText does, so `my_v' keeps
+`my-var', and inserts the label.  The word is re-asked when it changes
+\(`lpy--rerunning-capf').  Candidates come from the buffer file's scope
+\(the session scope without a file)."
   (when (lpy-nrepl-connected-p)
-    (let* ((end (point))
-           (symbol-start (lpy--completion-word-start))
-           (prefix (buffer-substring-no-properties symbol-start end))
+    (let* ((symbol-start (lpy--completion-word-start))
+           (prefix (buffer-substring-no-properties symbol-start (point)))
            ;; The server gets the full dotted PREFIX and replies with
            ;; labels that are already the word after the last dot, which
-           ;; is the text from START to point.  Candidates are those labels.
+           ;; is the text from START to point.
            (start (lpy--completion-start symbol-start))
+           (end (lpy--completion-end))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
-           (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER . DESCRIPTION)
-           (result nil)
-           (fetched nil))
+           (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER DESCRIPTION FILTER-TEXT)
+           (labels nil)
+           (fetched nil)
+           (fetch
+            (lambda ()
+              ;; The fetch depends only on the prefix captured above, so
+              ;; one request serves every table call; a timeout stays retryable.
+              (unless fetched
+                (lpy-nrepl--send
+                 `((op . "complete") (prefix . ,prefix) ,@file-fields)
+                 (lambda (response)
+                   (setq items (make-hash-table :test #'equal)
+                         labels nil)
+                   (mapc (lambda (item)
+                           (let ((label (alist-get 'label item)))
+                             (push label labels)
+                             (puthash label
+                                      (list (alist-get 'kind item)
+                                            (alist-get 'description
+                                                       (alist-get 'labelDetails item))
+                                            (or (alist-get 'filterText item) label))
+                                      items)))
+                         (alist-get 'items response))
+                   (setq labels (nreverse labels)
+                         fetched t)))
+                (with-timeout (1 nil)
+                  (while (not fetched)
+                    (accept-process-output lpy-nrepl--connection 0.05)))))))
       (when (> (length prefix) 0)
         (list start end
-              (completion-table-dynamic
-               (lambda (_)
-                 ;; The fetch depends only on the prefix captured above, so
-                 ;; one request serves every table call; a timeout stays retryable.
-                 (unless fetched
-                   (lpy-nrepl--send
-                    `((op . "complete") (prefix . ,prefix) ,@file-fields)
-                    (lambda (response)
-                      (setq items (make-hash-table :test #'equal))
-                      (setq result nil)
-                      (mapc (lambda (item)
-                              (let ((label (alist-get 'label item)))
-                                (push label result)
-                                (puthash label
-                                         (cons (alist-get 'kind item)
-                                               (alist-get 'description
-                                                          (alist-get 'labelDetails item)))
-                                         items)))
-                            (alist-get 'items response))
-                      (setq result (nreverse result)
-                            fetched t)))
-                   (with-timeout (1 nil)
-                     (while (not fetched)
-                       (accept-process-output lpy-nrepl--connection 0.05))))
-                 result))
+              (lambda (str pred action)
+                (pcase action
+                  ('metadata
+                   `(metadata (category . ,lpy-nrepl--completion-category)))
+                  (`(boundaries . ,_) nil)
+                  (_
+                   (funcall fetch)
+                   (lpy-nrepl--matched-completion
+                    str
+                    ;; Matched on filterText, never the label: the server
+                    ;; guarantees filterText starts with the typed word.
+                    ;; A label also matches itself, so an inserted
+                    ;; candidate passes `test-completion'.  A fresh list,
+                    ;; as callers may sort it in place.
+                    (cl-loop for label in labels
+                             when (and (or (equal str label)
+                                           (string-prefix-p
+                                            str (nth 2 (gethash label items))))
+                                       (or (null pred) (funcall pred label)))
+                             collect label)
+                    action))))
               :annotation-function
               (lambda (candidate)
                 (let ((item (gethash candidate items)))
-                  (lpy--item-annotation (cdr item) (car item))))
+                  (lpy--item-annotation (nth 1 item) (nth 0 item))))
               :company-kind
               (lambda (candidate)
                 (lpy--item-company-kind
-                 (car (gethash candidate items))))
+                 (nth 0 (gethash candidate items))))
               :exclusive 'no)))))
 
 ;;;; Merged completion (LSP + nREPL)
@@ -791,9 +878,15 @@ PRED is the predicate TABLE was given."
 A candidate name both offer is kept once, as MAIN's string, so MAIN's
 annotation, docs and exit function apply to it.  Names only EXTRA offers
 follow MAIN's candidates and keep EXTRA's per-candidate properties.
+Each table lists its own candidates for the string: EXTRA's are not
+re-filtered by label, since the nREPL's match on filterText.
 Each EXTRA-only candidate is a copy carrying the `lpy--extra-only' text
-property, which the sorter and the per-candidate dispatchers read, so a
-candidate keeps its owner however many tables were built since."
+property, which the sorter and the per-candidate dispatchers read.  The
+owner travels on the string, not in a per-table record of EXTRA-only
+names, because one merged table is queried with several strings (corfu
+lists the candidates, then calls `test-completion' on the inserted
+text): a record rebuilt by the later query would no longer hold the
+names the earlier listing showed."
   (cond
    ((null extra) main)
    ((null main) extra)
@@ -820,6 +913,8 @@ candidate keeps its owner however many tables were built since."
                    (kept nil))
                (dolist (cand main-cands)
                  (puthash (substring-no-properties cand) t seen))
+               ;; A function table answers `all-completions' itself, so
+               ;; the nREPL's filterText match decides, not the label.
                (dolist (cand (all-completions str extra-table
                                               (and-pred extra-pred pred)))
                  (let ((name (substring-no-properties cand)))
