@@ -741,7 +741,10 @@ PRED is the predicate TABLE was given."
   "Merge capf results MAIN and EXTRA, each (BEG END TABLE . PLIST) or nil.
 A candidate name both offer is kept once, as MAIN's string, so MAIN's
 annotation, docs and exit function apply to it.  Names only EXTRA offers
-follow MAIN's candidates and keep EXTRA's per-candidate properties."
+follow MAIN's candidates and keep EXTRA's per-candidate properties.
+Each EXTRA-only candidate is a copy carrying the `lpy--extra-only' text
+property, which the sorter and the per-candidate dispatchers read, so a
+candidate keeps its owner however many tables were built since."
   (cond
    ((null extra) main)
    ((null main) extra)
@@ -752,15 +755,16 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
     (pcase-let* ((`(,beg ,main-end ,main-table . ,main-plist) main)
                  (`(,_ ,extra-end ,extra-table . ,extra-plist) extra)
                  (main-pred (plist-get main-plist :predicate))
-                 (extra-pred (plist-get extra-plist :predicate))
-                 (extra-only (make-hash-table :test #'equal)))
+                 (extra-pred (plist-get extra-plist :predicate)))
       (cl-labels
           ((and-pred (own pred)
              (cond ((and own pred) (lambda (&rest args)
                                      (and (apply own args) (apply pred args))))
                    (t (or own pred))))
+           (extra-only-p (cand)
+             (and (stringp cand) (> (length cand) 0)
+                  (get-text-property 0 'lpy--extra-only cand)))
            (candidates (str pred)
-             (clrhash extra-only)
              (let ((main-cands (all-completions str main-table
                                                 (and-pred main-pred pred)))
                    (seen (make-hash-table :test #'equal))
@@ -772,13 +776,15 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
                  (let ((name (substring-no-properties cand)))
                    (unless (gethash name seen)
                      (puthash name t seen)
-                     (puthash name t extra-only)
-                     (push cand kept))))
+                     (let ((copy (copy-sequence cand)))
+                       (put-text-property 0 (length copy)
+                                          'lpy--extra-only t copy)
+                       (push copy kept)))))
                ;; MAIN's strings are returned as they are: eglot keeps
                ;; its LSP item as a text property on the candidate.
                (append main-cands (nreverse kept))))
            (owner-plist (cand)
-             (if (gethash (substring-no-properties cand) extra-only)
+             (if (extra-only-p cand)
                  extra-plist
                main-plist)))
         (let* ((main-meta (lpy--capf-table-metadata main-table main-pred))
@@ -790,7 +796,7 @@ follow MAIN's candidates and keep EXTRA's per-candidate properties."
                     (lambda (cands)
                       (let (main-part extra-part)
                         (dolist (cand cands)
-                          (if (gethash (substring-no-properties cand) extra-only)
+                          (if (extra-only-p cand)
                               (push cand extra-part)
                             (push cand main-part)))
                         (append (funcall main-sort (nreverse main-part))
@@ -926,8 +932,8 @@ the nREPL's dotted names depend on it."
     (modify-syntax-entry ?. "." table)
     table))
 
-(defun lpy-completion-at-point ()
-  "Completion-at-point function for `lpy-mode' buffers.
+(defun lpy--merged-capf ()
+  "Return the merged capf result of the eglot and nREPL sources.
 Merges the candidates of `eglot-completion-at-point', when eglot manages
 the buffer, with those of `lpy-nrepl-completion-at-point', when an nREPL
 is connected.  A name both offer appears once, with eglot's docs and exit
@@ -935,13 +941,101 @@ function; names only the nREPL knows keep its annotation and kind.  Both
 sources are annotated with the kind's word (`lpy--completion-kinds');
 an LSP candidate's signature goes to the doc popup and the docsig line
 \(`lpy--shorten-eglot-capf').  Works with neither, either or both
-sources available."
+sources available; a lone source is returned unmerged."
   (lpy--merge-capf-results
    (lpy--shorten-eglot-capf
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
          (with-syntax-table (lpy--lsp-syntax-table)
            (eglot-completion-at-point))))
    (lpy-nrepl-completion-at-point)))
+
+(defun lpy--candidate-generation (cand)
+  "Return the capf generation plist tagged on CAND, or nil."
+  (and (stringp cand) (> (length cand) 0)
+       (get-text-property 0 'lpy--capf-generation cand)))
+
+(defun lpy--generation-dispatcher (key latest)
+  "Return a KEY property applying KEY of the candidate's generation.
+An untagged candidate (a `try-completion' result) uses the plist the
+function LATEST returns.  A separate function, so each KEY is its own
+binding (`cl-loop' reuses one variable for every iteration)."
+  (lambda (cand &rest args)
+    (let ((fn (plist-get (or (lpy--candidate-generation cand)
+                             (funcall latest))
+                         key)))
+      (when fn (apply fn cand args)))))
+
+(defun lpy--rerunning-capf (capf)
+  "Call CAPF and return its result with a table that re-runs CAPF.
+eglot caches the server's answer inside each table it returns, and
+corfu keeps one table for its whole session, so an answer the server
+marked isIncomplete would never be re-asked while typing.  The returned
+table re-calls CAPF when its candidates are asked for and the text
+between the bounds has changed, and lists the new result's candidates
+when its bounds are the same.  Each listed candidate is tagged with
+the plist of the CAPF call that produced it, and the returned
+per-candidate properties apply that plist's functions, so a candidate
+keeps its exit function and docs after later re-runs.  Modelled on
+cape's `cape-wrap-buster'."
+  (pcase (funcall capf)
+    (`(,beg ,end ,table . ,plist)
+     (let* ((buffer (current-buffer))
+            (beg (copy-marker beg))
+            (end (copy-marker end t))
+            (input (buffer-substring-no-properties beg end))
+            (latest plist))
+       `(,(marker-position beg) ,(marker-position end)
+         ,(lambda (str pred action)
+            ;; Only the candidates call re-runs, never metadata or
+            ;; `test-completion': accepting a candidate inserts it and
+            ;; then tests it, and a re-run there would build a table
+            ;; from the inserted text.  Reading the previous table's
+            ;; metadata first is harmless: the merged sorter is
+            ;; stateless (`lpy--merge-capf-results').
+            (when (and (eq action t) (buffer-live-p buffer))
+              (with-current-buffer buffer
+                (let ((new-input (buffer-substring-no-properties beg end)))
+                  (unless (equal input new-input)
+                    (let ((result (let (completion-ignore-case
+                                        completion-regexp-list)
+                                    (funcall capf))))
+                      (let (throw-on-input) ; No interrupt mid-update.
+                        (pcase result
+                          ((and `(,new-beg ,new-end ,new-table . ,new-plist)
+                                (guard (and (= beg new-beg) (= end new-end))))
+                           (setq table new-table
+                                 latest new-plist)))
+                        ;; Recorded even when the bounds moved (after a
+                        ;; `corfu-insert-separator' they start past the
+                        ;; space), so the old table is not re-run on
+                        ;; every call.
+                        (setq input new-input)))))))
+            (if (eq action t)
+                (let ((generation latest))
+                  (mapcar (lambda (cand)
+                            (let ((copy (copy-sequence cand)))
+                              (put-text-property 0 (length copy)
+                                                 'lpy--capf-generation
+                                                 generation copy)
+                              copy))
+                          (complete-with-action t table str pred)))
+              (complete-with-action action table str pred)))
+         ;; A dispatcher for every per-candidate key, not only the first
+         ;; result's: a source joining mid-session (eglot answering after
+         ;; the nREPL did) brings its exit function and docs then.
+         ,@(cl-loop for key in lpy--capf-candidate-properties
+                    nconc (list key (lpy--generation-dispatcher
+                                     key (lambda () latest))))
+         ,@(cl-loop for (key value) on plist by #'cddr
+                    unless (memq key lpy--capf-candidate-properties)
+                    nconc (list key value)))))))
+
+(defun lpy-completion-at-point ()
+  "Completion-at-point function for `lpy-mode' buffers.
+Merges eglot's LSP candidates with the nREPL's (`lpy--merged-capf'),
+re-running the merge as the typed word changes (`lpy--rerunning-capf'),
+so candidates follow the server on every keystroke."
+  (lpy--rerunning-capf #'lpy--merged-capf))
 
 ;;; Eldoc (nREPL-backed)
 
