@@ -1293,20 +1293,42 @@ captured reply is an error."
       (delete-region beg (point))
       (insert word))))
 
+(defmacro lpy-nrepl-test--with-user-style (&rest body)
+  "Run BODY with `substring' as the user's style and no category override.
+`substring' re-filters the labels by the input (`my_v' is no substring
+of `my-var'), so a server match in another spelling survives only
+through the style the table's category brings."
+  `(let ((completion-styles '(substring))
+         (completion-category-overrides nil))
+     ,@body))
+
 (defun lpy-nrepl-test--corfu-candidates (beg table)
   "List TABLE's candidates for the text from BEG to point, as corfu does.
-The user's style is `basic' with no category override, so a candidate
-not prefixed by the input survives only through the style the table's
-category brings."
-  (let* ((input (buffer-substring-no-properties beg (point)))
-         (completion-styles '(basic))
-         (completion-category-overrides nil)
-         (metadata (completion-metadata input table nil))
-         (cands (completion-all-completions input table nil (length input)
-                                            metadata)))
-    ;; The last cdr is the base size.
-    (when cands (setcdr (last cands) nil))
-    cands))
+The user's style is `lpy-nrepl-test--with-user-style''s."
+  (lpy-nrepl-test--with-user-style
+   (let* ((input (buffer-substring-no-properties beg (point)))
+          (metadata (completion-metadata input table nil))
+          (cands (completion-all-completions input table nil (length input)
+                                             metadata)))
+     ;; The last cdr is the base size.
+     (when cands (setcdr (last cands) nil))
+     cands)))
+
+(defun lpy-nrepl-test--style-try (beg table)
+  "Return `completion-try-completion' of the text from BEG to point in TABLE.
+The user's style is `lpy-nrepl-test--with-user-style''s."
+  (lpy-nrepl-test--with-user-style
+   (let ((input (buffer-substring-no-properties beg (point))))
+     (completion-try-completion input table nil (length input)
+                                (completion-metadata input table nil)))))
+
+(defun lpy-nrepl-test--capf-wrapper-result ()
+  "Return what `completion-at-point' gets from `lpy-completion-at-point'.
+`completion--capf-wrapper' drops a non-exclusive result whose
+`try-completion' of the text before point is nil."
+  (let ((completion-at-point-functions '(lpy-completion-at-point)))
+    (cdr (run-hook-wrapped 'completion-at-point-functions
+                           #'completion--capf-wrapper 'all))))
 
 (defconst lpy-nrepl-test--typed-words '("m" "my" "my-" "my-v" "my_v" "MY_v")
   "Keystrokes of a corfu session, ending in mixed spellings of `my-var'.")
@@ -1328,6 +1350,39 @@ category brings."
             (lpy-nrepl-test--corfu-candidates beg table))
           ;; One request per word; an unchanged word asks nothing.
           (should (equal (reverse sent) lpy-nrepl-test--typed-words)))))))
+
+(ert-deftest lpy-nrepl-test-capf-mixed-spelling-survives-capf-wrapper ()
+  ;; Defect: try-completion matches labels by prefix, so at `my_v' it is
+  ;; nil and `completion--capf-wrapper' (default completion, company)
+  ;; drops the non-exclusive nREPL source; or the user's style re-filters
+  ;; the labels and TAB finds nothing.
+  (let ((sent nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f my_v")
+        (let ((result (lpy-nrepl-test--capf-wrapper-result)))
+          (should result)
+          (should (member "my-var" (lpy-nrepl-test--corfu-candidates
+                                    (nth 0 result) (nth 2 result))))
+          (should (equal (lpy-nrepl-test--style-try (nth 0 result) (nth 2 result))
+                         '("my-var" . 6)))
+          ;; Accepting inserts the label, which then tests as complete.
+          (should (test-completion "my-var" (nth 2 result))))))))
+
+(ert-deftest lpy-nrepl-test-capf-empty-reply-tries-nil ()
+  ;; Defect: an empty answer still "completes" (the pass-through style
+  ;; returns the input), so the non-exclusive nREPL source shadows later
+  ;; capfs (cape-dabbrev) and TAB never says "No match".
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent '((items . []))
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f zq")
+        (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-nrepl-completion-at-point)))
+          (should-not (try-completion "zq" table))
+          (should-not (lpy-nrepl-test--style-try beg table)))
+        (should-not (lpy-nrepl-test--capf-wrapper-result))))))
 
 (ert-deftest lpy-nrepl-test-capf-never-blinks-merged ()
   ;; Defect: the merge lists the nREPL's candidates by label prefix, so
@@ -1355,10 +1410,11 @@ category brings."
                            lpy-nrepl-test--typed-words))))))))
 
 (ert-deftest lpy-nrepl-test-merged-capf-owner-survives-later-query ()
-  ;; Defect: the merge records the nREPL-only names per table and the
-  ;; record is rebuilt by each query, so after corfu's `test-completion'
-  ;; of the inserted text a candidate from the earlier listing is
-  ;; dispatched to eglot: eglot's annotation and no kind.
+  ;; Defect: a merge that records the nREPL-only names per table (the
+  ;; tempting replacement for the `lpy--extra-only' property) rebuilds the
+  ;; record on each query, so after corfu's `test-completion' of the
+  ;; inserted text a candidate from the earlier listing is dispatched to
+  ;; eglot: eglot's annotation and no kind.
   (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
       (lpy-nrepl-test--nrepl-capf)
     (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))

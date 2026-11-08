@@ -736,9 +736,25 @@ The all-completions function of the `lpy-nrepl-passthrough' style."
 PRED filters the candidates.  The try-completion function of the
 `lpy-nrepl-passthrough' style."
   (let ((cands (all-completions (substring string 0 point) table pred)))
-    (if (and cands (null (cdr cands)))
-        (cons (car cands) (length (car cands)))
-      (cons string point))))
+    (cond ((null cands) nil) ; No match: later capfs and "No match" apply.
+          ((null (cdr cands)) (cons (car cands) (length (car cands))))
+          (t (cons string point)))))
+
+(defun lpy-nrepl--matched-completion (str matched action)
+  "Answer completion ACTION for STR from MATCHED, the labels listed for STR.
+Try- and test-completion follow the listing, not a label prefix match:
+`completion--capf-wrapper' (default completion, company) drops a
+non-exclusive source whose `try-completion' is nil, which a label match
+would be at `my_v' for `my-var'.  Try-completion keeps STR as typed
+unless every match extends it literally."
+  (pcase action
+    ('t matched)
+    ('lambda (and (member str matched) t))
+    (_ (cond ((null matched) nil)
+             ((equal matched (list str)) t)
+             ((cl-every (lambda (label) (string-prefix-p str label)) matched)
+              (try-completion str matched))
+             (t str)))))
 
 ;; The server matches the word (case and `-'/`_' insensitively), so the
 ;; table already holds exactly the candidates; the user's style (basic,
@@ -808,17 +824,20 @@ the table lists the labels whose filterText does, so `my_v' keeps
                   (`(boundaries . ,_) nil)
                   (_
                    (funcall fetch)
-                   (pcase action
-                     ;; Matched on filterText, never the label: the server
-                     ;; guarantees filterText starts with the typed word.
-                     ;; A fresh list, as callers may sort it in place.
-                     ('t (cl-loop for label in labels
-                                  when (and (string-prefix-p
-                                             str (nth 2 (gethash label items)))
-                                            (or (null pred) (funcall pred label)))
-                                  collect label))
-                     ('lambda (test-completion str labels pred))
-                     (_ (try-completion str labels pred))))))
+                   (lpy-nrepl--matched-completion
+                    str
+                    ;; Matched on filterText, never the label: the server
+                    ;; guarantees filterText starts with the typed word.
+                    ;; A label also matches itself, so an inserted
+                    ;; candidate passes `test-completion'.  A fresh list,
+                    ;; as callers may sort it in place.
+                    (cl-loop for label in labels
+                             when (and (or (equal str label)
+                                           (string-prefix-p
+                                            str (nth 2 (gethash label items))))
+                                       (or (null pred) (funcall pred label)))
+                             collect label)
+                    action))))
               :annotation-function
               (lambda (candidate)
                 (let ((item (gethash candidate items)))
