@@ -732,26 +732,30 @@ The all-completions function of the `lpy-nrepl-passthrough' style."
   (all-completions (substring string 0 point) table pred))
 
 (defun lpy-nrepl--passthrough-try (string table pred point)
-  "Complete STRING up to POINT to TABLE's sole candidate, if there is one.
+  "Complete STRING up to POINT as TABLE's own try-completion does.
 PRED filters the candidates.  The try-completion function of the
-`lpy-nrepl-passthrough' style."
-  (let ((cands (all-completions (substring string 0 point) table pred)))
-    (cond ((null cands) nil) ; No match: later capfs and "No match" apply.
-          ((null (cdr cands)) (cons (car cands) (length (car cands))))
-          (t (cons string point)))))
+`lpy-nrepl-passthrough' style: the rule is the table's
+\(`lpy-nrepl--matched-completion'), only reshaped to a style's answer;
+the text after POINT is kept."
+  (let ((try (try-completion (substring string 0 point) table pred)))
+    (cond ((null try) nil) ; No match: later capfs and "No match" apply.
+          ((eq try t) t)
+          (t (cons (concat try (substring string point)) (length try))))))
 
 (defun lpy-nrepl--matched-completion (str matched action)
   "Answer completion ACTION for STR from MATCHED, the labels listed for STR.
 Try- and test-completion follow the listing, not a label prefix match:
 `completion--capf-wrapper' (default completion, company) drops a
 non-exclusive source whose `try-completion' is nil, which a label match
-would be at `my_v' for `my-var'.  Try-completion keeps STR as typed
-unless every match extends it literally."
+would be at `my_v' for `my-var'.  Try-completion gives the sole match,
+the shared start when every match extends STR literally, and otherwise
+STR as typed (`m' for `MyClass' and `my-var')."
   (pcase action
     ('t matched)
     ('lambda (and (member str matched) t))
     (_ (cond ((null matched) nil)
              ((equal matched (list str)) t)
+             ((null (cdr matched)) (car matched))
              ((cl-every (lambda (label) (string-prefix-p str label)) matched)
               (try-completion str matched))
              (t str)))))

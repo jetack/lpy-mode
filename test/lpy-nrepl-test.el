@@ -1266,7 +1266,9 @@ in the label's own spelling."
     ("my_v"
      . "{\"op\": \"complete-result\", \"word\": \"my_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my_var\"}], \"id\": \"4\"}")
     ("MY_v"
-     . "{\"op\": \"complete-result\", \"word\": \"MY_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"MY_var\"}], \"id\": \"5\"}"))
+     . "{\"op\": \"complete-result\", \"word\": \"MY_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"MY_var\"}], \"id\": \"5\"}")
+    ("heapq.heappu"
+     . "{\"op\": \"complete-result\", \"word\": \"heappu\", \"completions\": [\"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\"], \"items\": [{\"label\": \"heappush\", \"kind\": 3, \"filterText\": \"heappush\"}, {\"label\": \"heappush-max\", \"kind\": 3, \"filterText\": \"heappush-max\"}, {\"label\": \"heappushpop\", \"kind\": 3, \"filterText\": \"heappushpop\"}, {\"label\": \"heappushpop-max\", \"kind\": 3, \"filterText\": \"heappushpop-max\"}], \"id\": \"0\"}"))
   "Replies captured from lispython's nREPL, keyed by the prefix asked.")
 
 (defmacro lpy-nrepl-test--with-captured-nrepl (sent &rest body)
@@ -1369,6 +1371,21 @@ The user's style is `lpy-nrepl-test--with-user-style''s."
                          '("my-var" . 6)))
           ;; Accepting inserts the label, which then tests as complete.
           (should (test-completion "my-var" (nth 2 result))))))))
+
+(ert-deftest lpy-nrepl-test-capf-try-inserts-shared-start ()
+  ;; Defect: the style's try leaves the input as typed whenever several
+  ;; candidates match, so TAB at `heappu' never inserts the `heappush'
+  ;; every candidate shares; a mixed spelling (`m' for `MyClass' and
+  ;; `my-var') must still stay as typed.
+  (let ((sent nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (dolist (case '(("heapq.heappu" "heappush" . 8) ("m" "m" . 1)))
+        (with-temp-buffer
+          (lpy-mode)
+          (insert "(f " (car case))
+          (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-completion-at-point)))
+            (should (equal (lpy-nrepl-test--style-try beg table)
+                           (cdr case)))))))))
 
 (ert-deftest lpy-nrepl-test-capf-empty-reply-tries-nil ()
   ;; Defect: an empty answer still "completes" (the pass-through style
