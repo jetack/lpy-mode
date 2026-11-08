@@ -1092,6 +1092,27 @@ SENT is set to the prefix the client asked for."
           (should (equal (all-completions "->f" (nth 2 res)) '("->foo")))
           (should (equal sent "->f")))))))
 
+(ert-deftest lpy-nrepl-test-arrow-merge-keeps-nrepl-names ()
+  ;; Defect: the nREPL source starts at `f' while eglot starts at `-', so
+  ;; the merge drops the nREPL-only name `->foo'.
+  (require 'lpy-mode)
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "->foo" 3)]))
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(->f")
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                  ((symbol-function 'eglot-completion-at-point)
+                   (lambda ()
+                     (let ((b (or (bounds-of-thing-at-point 'symbol)
+                                  (cons (point) (point)))))
+                       (list (car b) (cdr b) (list "->fmt"))))))
+          (let* ((res (lpy-completion-at-point))
+                 (names (all-completions "->f" (nth 2 res))))
+            (should (member "->fmt" names))
+            (should (member "->foo" names))))))))
+
 (ert-deftest lpy-nrepl-test-capf-question-mark-name ()
   ;; Defect: `?' is outside the word charset (and punctuation in the
   ;; temp buffer's own table), so after `ok?' the prefix is empty and the
