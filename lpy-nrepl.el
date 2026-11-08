@@ -758,8 +758,9 @@ order."
 (defconst lpy--word-digit ?٠
   "The one non-ASCII decimal digit a line's digits are normalized to.
 Python's `\\d' is every Unicode Nd character, but a class of all Nd ranges
-at each of `numberToken's ~60 `\\d's makes the regexp too big for Emacs.
-So `lpy--word-normalize-digits' maps each non-ASCII Nd character to this
+at each of `numberToken's hundred or so `\\d's makes the regexp too big
+for Emacs.  So `lpy--word-normalize-digits' maps each non-ASCII Nd
+character to this
 one (ARABIC-INDIC DIGIT ZERO) and `\\d' becomes [0-9] plus it.  Every
 predicate the rule applies survives: the ASCII-literal classes
 \(`[0-7]', `[0-9a-fA-F]'...) still reject it, no stop or form-end
@@ -805,7 +806,7 @@ Only the subset the spec publishes is understood: groups (all made shy),
 escaped punctuation and literal characters.  Anything else signals an
 error, so a spec that starts using more syntax fails at load instead of
 being silently mistranslated."
-  (let ((i 0) (n (length pattern)) (out nil) (quantifiable nil))
+  (let ((i 0) (n (length pattern)) (out nil) (quantifiable nil) (depth 0))
     (cl-flet ((fail (what) (error "Unsupported Python regexp %s at %d in %S"
                                   what i pattern))
               (escaped (char)
@@ -838,7 +839,12 @@ being silently mistranslated."
                   (setq j (1+ j))
                   (cond
                    ((null item) (fail "class item"))
-                   ((consp item) (setq chars (append (cdr item) chars)))
+                   ((consp item)
+                    (when (and (< j n) (eq (aref pattern j) ?-)
+                               (not (and (< (1+ j) n)
+                                         (eq (aref pattern (1+ j)) ?\]))))
+                      (fail "range from a class escape"))
+                    (setq chars (append (cdr item) chars)))
                    ;; A range: `-' between two characters.
                    ((and (< (1+ j) n) (eq (aref pattern j) ?-)
                          (not (eq (aref pattern (1+ j)) ?\])))
@@ -857,8 +863,10 @@ being silently mistranslated."
                    (setq i (+ i 3)))
                   (t (fail "group extension")))
             (push "\\(?:" out)
-            (setq quantifiable nil))
+            (setq depth (1+ depth) quantifiable nil))
            ((eq c ?\))
+            (when (zerop depth) (fail "unbalanced `)'"))
+            (setq depth (1- depth))
             (push "\\)" out)
             (setq i (1+ i) quantifiable t))
            ((eq c ?|)
@@ -874,6 +882,7 @@ being silently mistranslated."
            (t
             (push (regexp-quote (string c)) out)
             (setq i (1+ i) quantifiable t)))))
+      (unless (zerop depth) (fail "unbalanced `('"))
       (apply #'concat (nreverse out)))))
 
 (defconst lpy--word-stop-chars (lpy--word-rule-chars 'stopChars)
@@ -892,8 +901,9 @@ being silently mistranslated."
          ;; after an empty group 1, whose start is then the token's end.
          (ahead "\\(\\)"))
     `((opening . ,(concat "\\`" wrapper opening))
-      (string . ,(concat "\\`" (lpy--word-python-regexp
-                                (lpy--word-rule 'stringPrefix))
+      (string . ,(concat "\\`\\(?:" (lpy--word-python-regexp
+                                       (lpy--word-rule 'stringPrefix))
+                         "\\)"
                          (lpy--word-one-of (lpy--word-rule 'stringOpenings))))
       (dangling . ,(concat "\\`" wrapper
                            (lpy--word-one-of (lpy--word-rule 'danglingQuotes))
@@ -1380,8 +1390,8 @@ symbol, and an LSP server completes the word after the last dot, with a
 text edit covering only that word.  Under the Lisp-derived mode table `.'
 is a symbol constituent, so the bounds would be `heapq.nl' and no
 candidate would match.  Only the eglot call uses this table: the mode
-table keeps `.' as a symbol character because sexp motion, font-lock and
-the nREPL's dotted names depend on it."
+table keeps `.' as a symbol character because sexp motion and font-lock
+depend on it."
   (let ((table (copy-syntax-table (syntax-table))))
     (modify-syntax-entry ?. "." table)
     table))

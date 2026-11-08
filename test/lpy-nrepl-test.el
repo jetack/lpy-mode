@@ -1135,7 +1135,13 @@ SENT is set to the prefix the client asked for."
     (should (equal (cl-loop for (field . value) in lpy--word-boundary-rule
                             unless (equal value (alist-get field rule))
                             collect field)
-                   nil))))
+                   nil))
+    ;; A spec field the const lacks fails here (`steps' is the span
+    ;; algorithm, implemented by `lpy--word-span', not data).
+    (should (equal (sort (cl-loop for (field . _) in rule
+                                  unless (eq field 'steps) collect field)
+                         #'string<)
+                   (sort (mapcar #'car lpy--word-boundary-rule) #'string<)))))
 
 (ert-deftest lpy-nrepl-test-word-spec-file-is-lispythons ()
   ;; Defect: lispython publishes a new word-boundary spec and the committed
