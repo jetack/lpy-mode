@@ -660,7 +660,7 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 (defconst lpy--augassign-operators
   '("+=" "-=" "*=" "/=" "//=" "%=" "**=" "<<=" ">>=" "|=" "^=" "&=" "@=")
   "The keys of lispython's `augassignop_dict' (src/lispy/core/utils.py).
-The reader reads these whole before peeling any prefix.")
+At every peeling step the reader reads these whole, so `^**=' is `**='.")
 
 (defun lpy--completion-word-start ()
   "Return where the name being completed before point starts.
@@ -670,8 +670,9 @@ lispython's reader (`token_parse' in src/lispy/core/parser.py): `,' is
 whitespace there, and the prefixes `^', `:', `*', `**' and a run of
 `+'/`-' before an alphanumeric, `_' or `.' are peeled off a token of two
 or more characters.  The reader strips these before the name, so the
-server never sees them as part of it.  `#', `|', `->foo', `empty?' and
-the `lpy--augassign-operators' stay whole."
+server never sees them as part of it.  `#', `|', `->foo' and `empty?'
+stay whole, and so does what remains once it is one of the
+`lpy--augassign-operators', at every step (`^**=' leaves `**=')."
   (let ((end (point))
         (start (save-excursion
                  (with-syntax-table lpy-mode-syntax-table

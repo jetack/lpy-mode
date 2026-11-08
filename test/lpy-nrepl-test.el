@@ -1156,7 +1156,9 @@ SENT is set to the prefix the client asked for."
   (should (equal (lpy-nrepl-test--sent-and-offset "(f *ar") '("ar" . 2)))
   (should (equal (lpy-nrepl-test--sent-and-offset "(f **kw") '("kw" . 2)))
   ;; An augmented-assignment operator is read whole, never peeled.
-  (should (equal (lpy-nrepl-test--sent-and-offset "(**=") '("**=" . 3))))
+  (should (equal (lpy-nrepl-test--sent-and-offset "(**=") '("**=" . 3)))
+  ;; `**' peels as one prefix, leaving the operator `*='.
+  (should (equal (lpy-nrepl-test--sent-and-offset "(f ***=") '("*=" . 2))))
 
 (ert-deftest lpy-nrepl-test-comma-merge-keeps-nrepl-names ()
   ;; Defect: eglot's symbol bounds start at `,' while the nREPL source
