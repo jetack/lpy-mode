@@ -8,6 +8,10 @@
 ;;     -l test/lpy-nrepl-test.el -f ert-run-tests-batch-and-exit
 ;; load-prefer-newer matters: a stale (gitignored) lpy-nrepl.elc beside the
 ;; source is otherwise loaded instead, and the tests silently run old code.
+;; LPY_TEST_LSP_PYTHON=<a python with lispython> also runs the live tests,
+;; among them the check that test/word-boundary.json is lispython's spec.
+;; Refresh that file with `python -m lispy.word_boundary > test/word-boundary.json'
+;; and copy its `rule' into `lpy--word-boundary-rule'.
 
 ;;; Code:
 
@@ -1078,6 +1082,91 @@ SENT is set to the prefix the client asked for."
                  (names (all-completions "heap" (nth 2 res))))
             (should (member "heapify" names))
             (should (member "heapify-max" names))))))))
+
+;;; Completion word bounds: lispython's word-boundary spec
+
+(defconst lpy-nrepl-test--word-spec-file
+  (expand-file-name "word-boundary.json"
+                    (file-name-directory (or load-file-name buffer-file-name)))
+  "The spec as `python -m lispy.word_boundary' prints it, committed.")
+
+(defun lpy-nrepl-test--json (text)
+  "Parse TEXT, the word-boundary spec's JSON."
+  (json-parse-string text :object-type 'alist :array-type 'list))
+
+(defun lpy-nrepl-test--word-spec ()
+  "Return the committed word-boundary spec, parsed."
+  (lpy-nrepl-test--json
+   (with-temp-buffer
+     (insert-file-contents lpy-nrepl-test--word-spec-file)
+     (buffer-string))))
+
+(ert-deftest lpy-nrepl-test-word-span-reproduces-every-spec-case ()
+  ;; Defect: the completion word disagrees with the reader's (a charset or
+  ;; peel of the client's own, a Python class read as Emacs's, a lookahead
+  ;; mistranslated), so a name gets the wrong prefix or none.  The line
+  ;; sits between two others, so taking the buffer, not the line, fails.
+  (let ((cases (alist-get 'cases (lpy-nrepl-test--word-spec)))
+        (mismatches nil))
+    (dolist (case cases)
+      (let-alist case
+        (with-temp-buffer
+          (insert "(prev line)\n")
+          (let ((bol (point)))
+            (insert .text "\n(next line)")
+            (goto-char (+ bol .caret))
+            (let ((got (mapcar (lambda (pos) (- pos bol))
+                               (lpy--completion-span)))
+                  (want (list .start .replaceStart .end)))
+              (unless (equal got want)
+                (push (format "%S at %d: got %S, want %S" .text .caret got want)
+                      mismatches)))))))
+    ;; One message, so ERT's print length elides no mismatch.
+    (when mismatches
+      (ert-fail (format "%d of %d spec cases differ:\n%s"
+                        (length mismatches) (length cases)
+                        (string-join (nreverse mismatches) "\n"))))))
+
+(ert-deftest lpy-nrepl-test-word-rule-is-the-committed-spec ()
+  ;; Defect: `lpy--word-boundary-rule' drifts from the spec file (a field
+  ;; edited by hand or a regenerated spec not copied in), so the cases
+  ;; pinned and the rule the client runs are different specs.
+  (let ((rule (alist-get 'rule (lpy-nrepl-test--word-spec))))
+    (should (equal (cl-loop for (field . value) in lpy--word-boundary-rule
+                            unless (equal value (alist-get field rule))
+                            collect field)
+                   nil))
+    ;; A spec field the const lacks fails here (`steps' is the span
+    ;; algorithm, implemented by `lpy--word-span', not data).
+    (should (equal (sort (cl-loop for (field . _) in rule
+                                  unless (eq field 'steps) collect field)
+                         #'string<)
+                   (sort (mapcar #'car lpy--word-boundary-rule) #'string<)))))
+
+(ert-deftest lpy-nrepl-test-word-spec-file-is-lispythons ()
+  ;; Defect: lispython publishes a new word-boundary spec and the committed
+  ;; copy (with the rule built from it) is left stale.
+  (let ((python (getenv "LPY_TEST_LSP_PYTHON")))
+    (skip-unless (and python (file-executable-p python)
+                      (zerop (call-process python nil nil nil
+                                           "-c" "import lispy.word_boundary"))))
+    (let* ((published (lpy-nrepl-test--json
+                       (with-temp-buffer
+                         (let ((coding-system-for-read 'utf-8))
+                           (should (zerop (call-process
+                                           python nil '(t nil) nil
+                                           "-m" "lispy.word_boundary"))))
+                         (buffer-string))))
+           (committed (lpy-nrepl-test--word-spec)))
+      (should (equal (cl-loop for (key . value) in published
+                              unless (equal value (alist-get key committed))
+                              collect key)
+                     nil))
+      (should (equal (cl-set-difference
+                      (alist-get 'cases published) (alist-get 'cases committed)
+                      :test #'equal)
+                     nil))
+      (should (equal published committed)))))
 
 (defun lpy-nrepl-test--item (label kind &optional description filter-text)
   "Return a parsed `items' entry, as `json-parse-string' yields it.
