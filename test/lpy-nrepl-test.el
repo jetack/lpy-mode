@@ -1268,7 +1268,9 @@ in the label's own spelling."
     ("MY_v"
      . "{\"op\": \"complete-result\", \"word\": \"MY_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"MY_var\"}], \"id\": \"5\"}")
     ("heapq.heappu"
-     . "{\"op\": \"complete-result\", \"word\": \"heappu\", \"completions\": [\"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\"], \"items\": [{\"label\": \"heappush\", \"kind\": 3, \"filterText\": \"heappush\"}, {\"label\": \"heappush-max\", \"kind\": 3, \"filterText\": \"heappush-max\"}, {\"label\": \"heappushpop\", \"kind\": 3, \"filterText\": \"heappushpop\"}, {\"label\": \"heappushpop-max\", \"kind\": 3, \"filterText\": \"heappushpop-max\"}], \"id\": \"0\"}"))
+     . "{\"op\": \"complete-result\", \"word\": \"heappu\", \"completions\": [\"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\"], \"items\": [{\"label\": \"heappush\", \"kind\": 3, \"filterText\": \"heappush\"}, {\"label\": \"heappush-max\", \"kind\": 3, \"filterText\": \"heappush-max\"}, {\"label\": \"heappushpop\", \"kind\": 3, \"filterText\": \"heappushpop\"}, {\"label\": \"heappushpop-max\", \"kind\": 3, \"filterText\": \"heappushpop-max\"}], \"id\": \"0\"}")
+    ("my-var"
+     . "{\"op\": \"complete-result\", \"word\": \"my-var\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my-var\"}], \"id\": \"0\"}"))
   "Replies captured from lispython's nREPL, keyed by the prefix asked.")
 
 (defmacro lpy-nrepl-test--with-captured-nrepl (sent &rest body)
@@ -1386,6 +1388,41 @@ The user's style is `lpy-nrepl-test--with-user-style''s."
           (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-completion-at-point)))
             (should (equal (lpy-nrepl-test--style-try beg table)
                            (cdr case)))))))))
+
+(ert-deftest lpy-nrepl-test-capf-try-mid-word-replaces-word ()
+  ;; Defect: mid-word the field already holds the rest of the word, and
+  ;; the style's try appends it again (`(f my-v|ar)' TAB gives
+  ;; `my-varar'), or calls `my-var|x' complete as if `x' were not there.
+  (let ((sent nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      ;; Text before point, text after it, the style's try of the field.
+      (dolist (case '(("my-v" "ar" "my-var" . 6)
+                      ("my-var" "x" "my-var" . 6)
+                      ;; No progress: the field stays as it is.
+                      ("m" "x" "mx" . 1)))
+        (with-temp-buffer
+          (lpy-mode)
+          (insert "(f " (nth 0 case) (nth 1 case) ")")
+          (goto-char (- (point-max) (length (nth 1 case)) 1))
+          (pcase-let* ((`(,beg ,end ,table . ,_) (lpy-completion-at-point))
+                       (field (buffer-substring-no-properties beg end)))
+            (should (equal (lpy-nrepl-test--with-user-style
+                            (completion-try-completion
+                             field table nil (- (point) beg)
+                             (completion-metadata field table nil)))
+                           (nthcdr 2 case)))))))
+    ;; Default TAB replaces the whole word with the label.
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f my-var)")
+        (goto-char (- (point-max) 3))
+        (let ((completion-at-point-functions '(lpy-completion-at-point))
+              (inhibit-message t)
+              (minibuffer-message-timeout 0))
+          (lpy-nrepl-test--with-user-style (completion-at-point)))
+        (should (equal (buffer-string) "(f my-var)"))
+        (should (= (point) (1- (point-max))))))))
 
 (ert-deftest lpy-nrepl-test-capf-empty-reply-tries-nil ()
   ;; Defect: an empty answer still "completes" (the pass-through style

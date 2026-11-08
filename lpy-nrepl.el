@@ -735,12 +735,17 @@ The all-completions function of the `lpy-nrepl-passthrough' style."
   "Complete STRING up to POINT as TABLE's own try-completion does.
 PRED filters the candidates.  The try-completion function of the
 `lpy-nrepl-passthrough' style: the rule is the table's
-\(`lpy-nrepl--matched-completion'), only reshaped to a style's answer;
-the text after POINT is kept."
-  (let ((try (try-completion (substring string 0 point) table pred)))
+\(`lpy-nrepl--matched-completion'), only reshaped to a style's answer.
+STRING is the whole word (the bounds end at `lpy--completion-end') and a
+completion replaces all of it, so the text after POINT is not kept; a
+try that makes no progress leaves STRING as it is."
+  (let* ((before (substring string 0 point))
+         (try (try-completion before table pred)))
     (cond ((null try) nil) ; No match: later capfs and "No match" apply.
-          ((eq try t) t)
-          (t (cons (concat try (substring string point)) (length try))))))
+          ;; BEFORE is the sole label; t only when nothing follows it.
+          ((eq try t) (if (equal before string) t (cons before point)))
+          ((equal try before) (cons string point))
+          (t (cons try (length try))))))
 
 (defun lpy-nrepl--matched-completion (str matched action)
   "Answer completion ACTION for STR from MATCHED, the labels listed for STR.
