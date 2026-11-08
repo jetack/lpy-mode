@@ -1,0 +1,740 @@
+{
+  "version": 3,
+  "columns": "code points",
+  "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode (\\w holds 한, \\d holds ١)",
+  "rule": {
+    "unicode": "15.1.0",
+    "stopChars": [
+      "\t",
+      "\n",
+      "\u000b",
+      "\f",
+      "\r",
+      "\u001c",
+      "\u001d",
+      "\u001e",
+      "\u001f",
+      " ",
+      "\"",
+      ")",
+      ",",
+      ";",
+      "[",
+      "]",
+      "}",
+      "",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      "　"
+    ],
+    "formEndChars": [
+      "\t",
+      "\n",
+      "\u000b",
+      "\f",
+      "\r",
+      "\u001c",
+      "\u001d",
+      "\u001e",
+      "\u001f",
+      " ",
+      ")",
+      ",",
+      ";",
+      "]",
+      "}",
+      "",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      "　"
+    ],
+    "wrappers": [
+      "",
+      "*",
+      "^",
+      "**"
+    ],
+    "openings": [
+      "(",
+      "[",
+      "{"
+    ],
+    "metaChars": [
+      "'",
+      "`",
+      "~",
+      "~@"
+    ],
+    "tokenPrefixes": [
+      "**",
+      "*",
+      "^",
+      ":"
+    ],
+    "signs": [
+      "+",
+      "-"
+    ],
+    "signPeelFollowers": [
+      "_",
+      "."
+    ],
+    "neverPeeled": [
+      "%=",
+      "&=",
+      "**=",
+      "*=",
+      "+=",
+      "-=",
+      "//=",
+      "/=",
+      "<<=",
+      ">>=",
+      "@=",
+      "^=",
+      "|="
+    ],
+    "stringPrefix": "\\w*",
+    "stringOpenings": [
+      "'''",
+      "\"\"\"",
+      "\""
+    ],
+    "danglingQuotes": [
+      "'",
+      "`",
+      "~@"
+    ],
+    "numberToken": "[+-]*(?:(?:(?:\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)[+-])?(?:\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)[jJ]|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)",
+    "signedComplex": "[+-]*(?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)[+-](?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)",
+    "steps": [
+      "run: the stretch of the line around the caret holding no stopChars",
+      "lex the line, not the run alone, from the run's start, token after token, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a number (numberToken, followed by a formEndChars character or the line's end); else a symbol (the rest of the run). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
+      "the word token: the first token that ends after the caret, or ends at it and is a symbol or number; when there is none, or it is neither a symbol nor a number, the word is empty at the caret",
+      "peel the word token's front, repeatedly: never a neverPeeled token; never a number token that does not start with a signs character or that matches signedComplex whole; never a token under 2 characters; else the first tokenPrefixes entry it starts with, after which the rest is a number when it matches numberToken whole and keeps its type otherwise; else a run of signs followed by a str.isalnum character or a signPeelFollowers one, the rest keeping its type; else nothing (the rest is the leaf)",
+      "start: the leaf's start, or the token's when the caret is in the peeled front",
+      "replaceStart: after the last . between start and the caret",
+      "end: the first . after the caret in the token, else its end"
+    ]
+  },
+  "cases": [
+    {
+      "text": "foo",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "foo",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "foo",
+      "caret": 0,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "",
+      "caret": 0,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 0
+    },
+    {
+      "text": "x",
+      "caret": 0,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 1
+    },
+    {
+      "text": "x1",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "ok?",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "swap!",
+      "caret": 5,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 5
+    },
+    {
+      "text": "(swap!",
+      "caret": 6,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 6
+    },
+    {
+      "text": "->f",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "(->>",
+      "caret": 4,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 4
+    },
+    {
+      "text": "(++",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 3
+    },
+    {
+      "text": "(--",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 3
+    },
+    {
+      "text": "as->",
+      "caret": 4,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 4
+    },
+    {
+      "text": "a~b",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "a@b",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "a<b",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "a(b",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "a'b",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "except*",
+      "caret": 7,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 7
+    },
+    {
+      "text": "!=",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "-fo",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 3
+    },
+    {
+      "text": "--x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "(- -fo",
+      "caret": 6,
+      "start": 4,
+      "replaceStart": 4,
+      "end": 6
+    },
+    {
+      "text": "-.x",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "-_a",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 3
+    },
+    {
+      "text": "-́x",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "-²",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "-1",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "-foo",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 4
+    },
+    {
+      "text": "--x",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "**x",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "-",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 1
+    },
+    {
+      "text": "--",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "(-",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "(-)",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "-->x",
+      "caret": 4,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 4
+    },
+    {
+      "text": "-?",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": ":kw",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 3
+    },
+    {
+      "text": "::x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "^x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "*x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "**x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "^*x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "**=",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 3
+    },
+    {
+      "text": "^**=",
+      "caret": 4,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 4
+    },
+    {
+      "text": "+=",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "-=",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "'x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "`x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "~x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "~@x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "^'x",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "'x",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "~",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 1
+    },
+    {
+      "text": "~@x",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "(",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "{x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "[x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": ",x",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
+    },
+    {
+      "text": "#x",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "x'''",
+      "caret": 4,
+      "start": 4,
+      "replaceStart": 4,
+      "end": 4
+    },
+    {
+      "text": "*[1 2]",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "a\"",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "f\"x\"",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "-1+2j",
+      "caret": 5,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 5
+    },
+    {
+      "text": ":-1+2j",
+      "caret": 6,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 6
+    },
+    {
+      "text": "한\"",
+      "caret": 1,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 1
+    },
+    {
+      "text": "heapq.nl",
+      "caret": 8,
+      "start": 0,
+      "replaceStart": 6,
+      "end": 8
+    },
+    {
+      "text": "heapq.",
+      "caret": 6,
+      "start": 0,
+      "replaceStart": 6,
+      "end": 6
+    },
+    {
+      "text": "a.b.c",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "a..b",
+      "caret": 4,
+      "start": 0,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "text": "x.",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 2,
+      "end": 2
+    },
+    {
+      "text": ".method",
+      "caret": 7,
+      "start": 0,
+      "replaceStart": 1,
+      "end": 7
+    },
+    {
+      "text": "(.c",
+      "caret": 3,
+      "start": 1,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "x .c",
+      "caret": 4,
+      "start": 2,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "text": "1.5",
+      "caret": 3,
+      "start": 0,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "(foo bar)",
+      "caret": 8,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 8
+    },
+    {
+      "text": "\"ab\"",
+      "caret": 3,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 3
+    },
+    {
+      "text": "a b",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "a\u001cb",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "한국",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "x한",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "text": "𝑥y",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    }
+  ]
+}

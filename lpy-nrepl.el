@@ -657,70 +657,378 @@ rule of eglot and nREPL candidates, so one kind displays identically."
   "Return the `:company-kind' of KIND-NUMBER, an LSP CompletionItemKind."
   (nth 2 (assq (gethash kind-number lpy--lsp-kinds) lpy--completion-kinds)))
 
-(defconst lpy--augassign-operators
-  '("+=" "-=" "*=" "/=" "//=" "%=" "**=" "<<=" ">>=" "|=" "^=" "&=" "@=")
-  "The keys of lispython's `augassignop_dict' (src/lispy/core/utils.py).
-At every peeling step the reader reads these whole, so `^**=' is `**='.")
+;;; Completion word bounds
 
-(defun lpy--completion-word-start ()
-  "Return where the name being completed before point starts.
-The symbol is bounded by `lpy-mode-syntax-table', applied explicitly
-because the buffer may be in another mode.  The start then follows
-lispython's reader (`token_parse' in src/lispy/core/parser.py): `,' is
-whitespace there, and the prefixes `^', `:', `*', `**' and a run of
-`+'/`-' before an alphanumeric, `_' or `.' are peeled off a token of two
-or more characters.  The reader strips these before the name, so the
-server never sees them as part of it.  `#', `|', `->foo' and `empty?'
-stay whole, and so does what remains once it is one of the
-`lpy--augassign-operators', at every step (`^**=' leaves `**=')."
-  (let ((end (point))
-        (start (save-excursion
-                 (with-syntax-table lpy-mode-syntax-table
-                   (skip-syntax-backward "w_"))
-                 (point))))
-    (save-excursion
-      (when (search-backward "," start t)
-        (setq start (1+ (point)))))
-    (while (let ((token (buffer-substring-no-properties start end)))
-             (and (>= (length token) 2)
-                  (not (member token lpy--augassign-operators))
-                  (cond ((string-prefix-p "**" token) (cl-incf start 2))
-                        ((memq (aref token 0) '(?^ ?: ?*)) (cl-incf start))
-                        ((string-match "\\`[-+]+[[:alnum:]_.]" token)
-                         (cl-incf start (1- (match-end 0))))))))
-    start))
+;; The word completed at point is lispython's: its word-boundary spec
+;; (`python -m lispy.word_boundary', copied to test/word-boundary.json)
+;; publishes the rule as data and the cases a client must reproduce.  This
+;; client holds the rule's fields verbatim and builds every regexp from
+;; them, so a spec change is a change of data here, never a hand-edited
+;; charset.  `lpy--word-span' follows the spec's steps (and its reference
+;; interpreter, `spec_word_span' in lispython's tests/test_word_boundary.py).
+;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
+;; Python's definition, and the buffer may be in another mode.
 
-(defun lpy--completion-start (word-start)
-  "Return the completion start for the name at WORD-START: after its last dot.
-LSP completes the word after the last dot, and the eglot and nREPL
-sources must share the start or `lpy--merge-capf-results' drops one."
-  (save-excursion
-    (if (search-backward "." word-start t)
-        (1+ (point))
-      word-start)))
+(defconst lpy--word-boundary-rule
+  '((unicode . "15.1.0")
+    (stopChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
+                  "\u001f" " " "\"" ")" "," ";" "[" "]" "}" "\u0085" "\u00a0"
+                  "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
+                  "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
+                  "\u2028" "\u2029" "\u202f" "\u205f" "\u3000"))
+    (formEndChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
+                     "\u001f" " " ")" "," ";" "]" "}" "\u0085" "\u00a0"
+                     "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
+                     "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
+                     "\u2028" "\u2029" "\u202f" "\u205f" "\u3000"))
+    (wrappers . ("" "*" "^" "**"))
+    (openings . ("(" "[" "{"))
+    (metaChars . ("'" "`" "~" "~@"))
+    (tokenPrefixes . ("**" "*" "^" ":"))
+    (signs . ("+" "-"))
+    (signPeelFollowers . ("_" "."))
+    (neverPeeled . ("%=" "&=" "**=" "*=" "+=" "-=" "//=" "/=" "<<=" ">>="
+                    "@=" "^=" "|="))
+    (stringPrefix . "\\w*")
+    (stringOpenings . ("'''" "\"\"\"" "\""))
+    (danglingQuotes . ("'" "`" "~@"))
+    (numberToken . "[+-]*(?:(?:(?:\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]\
+?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(\
+?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\\
+-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\\
+d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)[+-])?(?:\\d+(?:_\\d+)*\
+\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+\
+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za\
+-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\\
+d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-\
+z]+)*)[jJ]|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:\
+_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\
+\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\
+\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\
+\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)")
+    (signedComplex . "[+-]*(?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?\
+:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9]\
+(?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?\
+:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-\
+9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO\
+](?:_?[0-7])+|[0-9](?:_?[0-9])*)[+-](?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-\
+9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])\
+*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(\
+?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9\
+](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[0\
+1])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)"))
+  "The `rule' of lispython's word-boundary spec, field for field.
+Copied verbatim from `python -m lispy.word_boundary' (the prose `steps'
+excepted); the tests pin it to test/word-boundary.json.  Character fields
+are lists of strings; `numberToken', `signedComplex' and `stringPrefix'
+are Python `re' patterns, translated by `lpy--word-python-regexp'.")
 
-(defun lpy--completion-end ()
-  "Return where the completed word after point ends.
-The end of the symbol after point under `lpy--lsp-syntax-table' (so a
-`.' ends it, as the LSP text edit does), before any `,'.  The eglot and
-nREPL sources share this end, as they share `lpy--completion-start':
-`lpy--rerunning-capf' keeps a re-run only when its bounds are unchanged,
-so differing ends would keep a source that joins later out of the list."
-  (with-syntax-table (lpy--lsp-syntax-table)
-    (save-excursion
-      (let ((symbol-end (save-excursion (skip-syntax-forward "w_")
-                                        (point))))
-        (if (search-forward "," symbol-end t)
-            (1- (point))
-          symbol-end)))))
+(defun lpy--word-rule (field)
+  "Return FIELD of `lpy--word-boundary-rule'."
+  (or (alist-get field lpy--word-boundary-rule)
+      (error "No word-boundary rule field `%s'" field)))
+
+(defun lpy--word-rule-chars (field)
+  "Return FIELD of the rule, a list of one-character strings, as characters."
+  (mapcar (lambda (entry)
+            (if (= (length entry) 1)
+                (aref entry 0)
+              (error "Rule field `%s' holds %S, not one character"
+                     field entry)))
+          (lpy--word-rule field)))
+
+(defun lpy--word-char-class (chars &optional negated)
+  "Return a regexp matching one of CHARS, or one not in them when NEGATED.
+Built by rx, so `]', `^' and `-' among CHARS need no care.  CHARS may hold
+\(FROM . TO) ranges."
+  (rx-to-string (if negated `(not (any ,@chars)) `(any ,@chars)) t))
+
+(defun lpy--word-one-of (entries)
+  "Return a regexp group matching one of the literal ENTRIES, longest first.
+As the spec's `one_of': the first alternative that matches wins, so the
+longest entry is tried first (`~@' before `~'); equal lengths keep their
+order."
+  (concat "\\(?:"
+          (mapconcat #'regexp-quote
+                     (sort (copy-sequence entries)
+                           (lambda (a b) (> (length a) (length b))))
+                     "\\|")
+          "\\)"))
+
+(defconst lpy--word-digit ?٠
+  "The one non-ASCII decimal digit a line's digits are normalized to.
+Python's `\\d' is every Unicode Nd character, but a class of all Nd ranges
+at each of `numberToken's ~60 `\\d's makes the regexp too big for Emacs.
+So `lpy--word-normalize-digits' maps each non-ASCII Nd character to this
+one (ARABIC-INDIC DIGIT ZERO) and `\\d' becomes [0-9] plus it.  Every
+predicate the rule applies survives: the ASCII-literal classes
+\(`[0-7]', `[0-9a-fA-F]'...) still reject it, no stop or form-end
+character is a digit, `\\w' and `str.isalnum' hold every Nd character,
+and columns are kept, the mapping being character for character.")
+
+(defun lpy--word-alnum-p (char)
+  "Return non-nil when CHAR is alphanumeric as Python's `str.isalnum'.
+A letter or a number: general category L* or N*."
+  (let ((category (get-char-code-property char 'general-category)))
+    (and category (memq (aref (symbol-name category) 0) '(?L ?N)))))
+
+(defconst lpy--word-alnum-ranges
+  (let (ranges)
+    ;; Ranges of `unicode-category-table' share one category, so the first
+    ;; character's names the range.  The cons key is reused: copy it.
+    (map-char-table
+     (lambda (key _value)
+       (let ((from (if (consp key) (car key) key))
+             (to (if (consp key) (cdr key) key)))
+         (when (lpy--word-alnum-p from)
+           (if (and ranges (= (cdar ranges) (1- from)))
+               (setcdr (car ranges) to)
+             (push (cons from to) ranges)))))
+     unicode-category-table)
+    (nreverse ranges))
+  "The (FROM . TO) ranges of `lpy--word-alnum-p' characters.")
+
+(defconst lpy--word-python-classes
+  `((?d . ((?0 . ?9) ,lpy--word-digit))
+    (?w . (?_ ,@lpy--word-alnum-ranges)))
+  "The characters of Python's `\\d' and `\\w' over normalized text.
+`\\d' relies on `lpy--word-normalize-digits'; `\\w' is `str.isalnum' or
+`_'.")
+
+(defconst lpy--word-python-literals ".-+*?()[]{}|^$\\/"
+  "The characters a Python pattern may escape to mean themselves.")
+
+(defun lpy--word-python-regexp (pattern)
+  "Translate PATTERN, a Python `re' pattern, to an Emacs regexp.
+Only the subset the spec publishes is understood: groups (all made shy),
+`|', the greedy `*', `+' and `?', classes with ranges, `\\d', `\\w',
+escaped punctuation and literal characters.  Anything else signals an
+error, so a spec that starts using more syntax fails at load instead of
+being silently mistranslated."
+  (let ((i 0) (n (length pattern)) (out nil) (quantifiable nil))
+    (cl-flet ((fail (what) (error "Unsupported Python regexp %s at %d in %S"
+                                  what i pattern))
+              (escaped (char)
+                (cond ((assq char lpy--word-python-classes)
+                       (cons 'class (cdr (assq char lpy--word-python-classes))))
+                      ((cl-position char lpy--word-python-literals) char))))
+      (while (< i n)
+        (let ((c (aref pattern i)))
+          (cond
+           ((eq c ?\\)
+            (let ((e (and (< (1+ i) n) (escaped (aref pattern (1+ i))))))
+              (cond ((null e) (fail "escape"))
+                    ((consp e) (push (lpy--word-char-class (cdr e)) out))
+                    (t (push (regexp-quote (string e)) out)))
+              (setq i (+ i 2) quantifiable t)))
+           ((eq c ?\[)
+            (let ((j (1+ i)) (negated nil) (chars nil))
+              (when (and (< j n) (eq (aref pattern j) ?^))
+                (setq negated t j (1+ j)))
+              (when (and (< j n) (eq (aref pattern j) ?\]))
+                (fail "class starting with ]"))
+              (while (and (< j n) (not (eq (aref pattern j) ?\])))
+                (let* ((d (aref pattern j))
+                       (item (cond ((eq d ?\\)
+                                    (prog1 (and (< (1+ j) n)
+                                                (escaped (aref pattern (1+ j))))
+                                      (setq j (1+ j))))
+                                   ((eq d ?\[) nil)
+                                   (t d))))
+                  (setq j (1+ j))
+                  (cond
+                   ((null item) (fail "class item"))
+                   ((consp item) (setq chars (append (cdr item) chars)))
+                   ;; A range: `-' between two characters.
+                   ((and (< (1+ j) n) (eq (aref pattern j) ?-)
+                         (not (eq (aref pattern (1+ j)) ?\])))
+                    (let ((to (aref pattern (1+ j))))
+                      (when (memq to '(?\\ ?\[)) (fail "range end"))
+                      (push (cons item to) chars)
+                      (setq j (+ j 2))))
+                   (t (push item chars)))))
+              (unless (< j n) (fail "unterminated class"))
+              (push (lpy--word-char-class chars negated) out)
+              (setq i (1+ j) quantifiable t)))
+           ((eq c ?\()
+            (cond ((not (and (< (1+ i) n) (eq (aref pattern (1+ i)) ??)))
+                   (setq i (1+ i)))
+                  ((and (< (+ i 2) n) (eq (aref pattern (+ i 2)) ?:))
+                   (setq i (+ i 3)))
+                  (t (fail "group extension")))
+            (push "\\(?:" out)
+            (setq quantifiable nil))
+           ((eq c ?\))
+            (push "\\)" out)
+            (setq i (1+ i) quantifiable t))
+           ((eq c ?|)
+            (push "\\|" out)
+            (setq i (1+ i) quantifiable nil))
+           ((memq c '(?* ?+ ??))
+            ;; Not after a quantifier: `*?' is lazy and `*+' possessive.
+            (unless quantifiable (fail "quantifier"))
+            (push (string c) out)
+            (setq i (1+ i) quantifiable nil))
+           ((memq c '(?. ?^ ?$ ?{ ?}))
+            (fail (format "`%c'" c)))
+           (t
+            (push (regexp-quote (string c)) out)
+            (setq i (1+ i) quantifiable t)))))
+      (apply #'concat (nreverse out)))))
+
+(defconst lpy--word-stop-chars (lpy--word-rule-chars 'stopChars)
+  "The characters no word runs over.")
+
+(defconst lpy--word-token-regexps
+  (let* ((stop (lpy--word-char-class lpy--word-stop-chars))
+         (form-end-chars (lpy--word-rule-chars 'formEndChars))
+         ;; Python's `$' over a line: its end, never before a newline.
+         (form-end (concat "\\(?:" (lpy--word-char-class form-end-chars)
+                           "\\|\\'\\)"))
+         (wrapper (lpy--word-one-of (lpy--word-rule 'wrappers)))
+         (opening (lpy--word-one-of (lpy--word-rule 'openings)))
+         (meta (lpy--word-one-of (lpy--word-rule 'metaChars)))
+         ;; Emacs has no lookahead: what a lookahead tests is matched
+         ;; after an empty group 1, whose start is then the token's end.
+         (ahead "\\(\\)"))
+    `((opening . ,(concat "\\`" wrapper opening))
+      (string . ,(concat "\\`" (lpy--word-python-regexp
+                                (lpy--word-rule 'stringPrefix))
+                         (lpy--word-one-of (lpy--word-rule 'stringOpenings))))
+      (dangling . ,(concat "\\`" wrapper
+                           (lpy--word-one-of (lpy--word-rule 'danglingQuotes))
+                           ahead form-end))
+      ;; Not followed by a form end: by a character outside them.
+      (meta . ,(concat "\\`" wrapper meta ahead
+                       (lpy--word-char-class form-end-chars t)))
+      (bad . ,(concat "\\`\\^\\*+\\(?:" opening "\\|" meta "\\|"
+                      ahead "\\(?:" stop "\\|\\'\\)\\)"))
+      (number . ,(concat "\\`\\(?:" (lpy--word-python-regexp
+                                     (lpy--word-rule 'numberToken))
+                         "\\)" ahead form-end))
+      (symbol . ,(concat "\\`" (lpy--word-char-class lpy--word-stop-chars t)
+                         "+"))))
+  "Each token kind as (KIND . REGEXP), in the order the spec tries them.
+A REGEXP matches at the start of the text it is given.  When its group 1
+matched, the token ends at that group, else at the match's end.")
+
+(defun lpy--word-full-regexp (field)
+  "Return a regexp matching a whole string as the rule's pattern FIELD."
+  (concat "\\`\\(?:" (lpy--word-python-regexp (lpy--word-rule field)) "\\)\\'"))
+
+(defconst lpy--word-number-regexp (lpy--word-full-regexp 'numberToken)
+  "Matches a whole number token.")
+
+(defconst lpy--word-signed-complex-regexp (lpy--word-full-regexp 'signedComplex)
+  "Matches a whole signed complex literal, which keeps its sign.")
+
+(defun lpy--word-normalize-digits (line)
+  "Return LINE with each non-ASCII decimal digit as `lpy--word-digit'.
+LINE itself when it holds none; see `lpy--word-digit' for why."
+  (let ((copy nil))
+    (dotimes (i (length line))
+      (let ((c (aref line i)))
+        (when (and (> c 127) (/= c lpy--word-digit)
+                   (eq (get-char-code-property c 'general-category) 'Nd))
+          (unless copy (setq copy (copy-sequence line)))
+          (aset copy i lpy--word-digit))))
+    (or copy line)))
+
+(defun lpy--word-token (line pos)
+  "Return (KIND . END), the token LINE holds at POS, or nil."
+  (let ((text (substring line pos)))
+    (cl-loop for (kind . regexp) in lpy--word-token-regexps
+             when (string-match regexp text)
+             return (cons kind
+                          (+ pos (or (match-beginning 1) (match-end 0)))))))
+
+(defun lpy--word-span (line caret)
+  "Return (START REPLACE-START END), the completion word at CARET in LINE.
+Columns, as lispython's word-boundary spec defines them: START begins
+the dotted name the server completes (sent up to the caret),
+REPLACE-START is after its last dot before the caret, where a candidate
+replaces, and END is the word's end, before the next dot.  All three are
+CARET when there is no word.  LINE excludes its newline."
+  (let* ((case-fold-search nil)
+         (line (lpy--word-normalize-digits line))
+         (run-start caret)
+         (run-end caret)
+         (pos nil) (start nil) (end nil) (kind nil))
+    (while (and (> run-start 0)
+                (not (memq (aref line (1- run-start)) lpy--word-stop-chars)))
+      (cl-decf run-start))
+    (while (and (< run-end (length line))
+                (not (memq (aref line run-end) lpy--word-stop-chars)))
+      (cl-incf run-end))
+    ;; Lex the line from the run's start until a token reaches the run's end.
+    (setq pos run-start)
+    (while (and (< pos run-end) (null kind))
+      (let ((token (lpy--word-token line pos)))
+        (setq start pos end (cdr token))
+        (cond ((null token) (setq pos run-end)) ; Unreachable: a symbol matches.
+              ((or (> end caret)
+                   (and (= end caret) (memq (car token) '(symbol number))))
+               (setq kind (car token)))
+              (t (setq pos end)))))
+    (if (not (memq kind '(symbol number)))
+        (list caret caret caret)
+      (let ((signs (lpy--word-rule-chars 'signs))
+            (followers (lpy--word-rule-chars 'signPeelFollowers))
+            (prefixes (lpy--word-rule 'tokenPrefixes))
+            (never (lpy--word-rule 'neverPeeled))
+            (leaf start))
+        ;; Peel the token's front; LEAF is where the rest begins.
+        (while (let ((rest (substring line leaf end)))
+                 (and (not (member rest never))
+                      (>= (length rest) 2)
+                      (not (and (eq kind 'number)
+                                (or (not (memq (aref rest 0) signs))
+                                    (string-match-p
+                                     lpy--word-signed-complex-regexp rest))))
+                      (let ((prefix (cl-find-if
+                                     (lambda (p) (string-prefix-p p rest))
+                                     prefixes))
+                            (unsigned (cl-position-if-not
+                                       (lambda (c) (memq c signs)) rest)))
+                        (cond
+                         (prefix
+                          (cl-incf leaf (length prefix))
+                          (when (string-match-p lpy--word-number-regexp
+                                                (substring line leaf end))
+                            (setq kind 'number))
+                          t)
+                         ((and unsigned (> unsigned 0)
+                               (let ((c (aref rest unsigned)))
+                                 (or (lpy--word-alnum-p c) (memq c followers))))
+                          (cl-incf leaf unsigned)
+                          t))))))
+        (when (>= caret leaf)
+          (setq start leaf))
+        (let ((dot (cl-position ?. line :start start :end caret :from-end t)))
+          (list start
+                (if dot (1+ dot) start)
+                (or (cl-position ?. line :start caret :end end) end)))))))
+
+(defun lpy--completion-span ()
+  "Return (WORD-START START END), the completion word at point.
+Buffer positions of `lpy--word-span' over the current line.  The nREPL
+source sends WORD-START..point, the full dotted prefix; both the eglot
+and nREPL sources complete START..END, which they must share:
+`lpy--merge-capf-results' drops a source with another start and
+`lpy--rerunning-capf' keeps a re-run only when its bounds are unchanged."
+  (let ((bol (line-beginning-position)))
+    (mapcar (lambda (column) (+ bol column))
+            (lpy--word-span (buffer-substring-no-properties
+                             bol (line-end-position))
+                            (- (point) bol)))))
 
 (defun lpy--completion-symbol-bounds ()
   "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.
-The nREPL source's bounds: `lpy--completion-start' and
-`lpy--completion-end'.  Never nil, so no symbol yields (point . point),
-eglot's own fallback, and not the default symbol bounds."
-  (cons (lpy--completion-start (lpy--completion-word-start))
-        (lpy--completion-end)))
+The nREPL source's bounds (`lpy--completion-span').  Never nil, so no
+word yields (point . point), eglot's own fallback, and not the default
+symbol bounds."
+  (let ((span (lpy--completion-span)))
+    (cons (nth 1 span) (nth 2 span))))
 
 (defconst lpy-nrepl--completion-category 'lpy-nrepl
   "Completion category of the nREPL source's table.
@@ -736,8 +1044,8 @@ The all-completions function of the `lpy-nrepl-passthrough' style."
 PRED filters the candidates.  The try-completion function of the
 `lpy-nrepl-passthrough' style: the rule is the table's
 \(`lpy-nrepl--matched-completion'), only reshaped to a style's answer.
-STRING is the whole word (the bounds end at `lpy--completion-end') and a
-completion replaces all of it, so the text after POINT is not kept; a
+STRING is the whole word (up to the END of `lpy--completion-span') and
+a completion replaces all of it, so the text after POINT is not kept; a
 try that makes no progress leaves STRING as it is."
   (let* ((before (substring string 0 point))
          (try (try-completion before table pred)))
@@ -787,13 +1095,13 @@ the table lists the labels whose filterText does, so `my_v' keeps
 \(`lpy--rerunning-capf').  Candidates come from the buffer file's scope
 \(the session scope without a file)."
   (when (lpy-nrepl-connected-p)
-    (let* ((symbol-start (lpy--completion-word-start))
-           (prefix (buffer-substring-no-properties symbol-start (point)))
+    (let* ((span (lpy--completion-span))
+           (prefix (buffer-substring-no-properties (nth 0 span) (point)))
            ;; The server gets the full dotted PREFIX and replies with
            ;; labels that are already the word after the last dot, which
            ;; is the text from START to point.
-           (start (lpy--completion-start symbol-start))
-           (end (lpy--completion-end))
+           (start (nth 1 span))
+           (end (nth 2 span))
            ;; Computed here: the table may run in another buffer.
            (file-fields (lpy-nrepl--file-fields))
            (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER DESCRIPTION FILTER-TEXT)
