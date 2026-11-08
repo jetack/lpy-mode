@@ -1078,6 +1078,35 @@ SENT is set to the prefix the client asked for."
   `((label . ,label) (kind . ,kind)
     ,@(when description `((labelDetails . ((description . ,description)))))))
 
+(ert-deftest lpy-nrepl-test-capf-arrow-name-start ()
+  ;; Defect: a hand-written word charset stops at `>', so `->f' sends `f'
+  ;; and starts at `f', where eglot's symbol bounds start at `-' and the
+  ;; merge drops the nREPL source.
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "->foo" 3)]))
+      (with-temp-buffer
+        (insert "(->f")
+        (let ((res (lpy-nrepl-completion-at-point)))
+          (should (= (nth 0 res) (- (point) 3)))
+          (should (equal (all-completions "->f" (nth 2 res)) '("->foo")))
+          (should (equal sent "->f")))))))
+
+(ert-deftest lpy-nrepl-test-capf-question-mark-name ()
+  ;; Defect: `?' is outside the word charset (and punctuation in the
+  ;; temp buffer's own table), so after `ok?' the prefix is empty and the
+  ;; capf offers nothing.
+  (let (sent)
+    (lpy-nrepl-test--with-reply sent
+        `((items . [,(lpy-nrepl-test--item "ok?" 3)]))
+      (with-temp-buffer
+        (insert "(if ok?")
+        (let ((res (lpy-nrepl-completion-at-point)))
+          (should res)
+          (should (= (nth 0 res) (- (point) 3)))
+          (all-completions "" (nth 2 res)) ; triggers the fetch
+          (should (equal sent "ok?")))))))
+
 (defun lpy-nrepl-test--annotations (text &rest names)
   "Complete TEXT in a temp buffer; return (ANNOTATION . COMPANY-KIND) per NAMES."
   (with-temp-buffer

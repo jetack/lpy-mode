@@ -95,29 +95,6 @@ Examples:
 ;;; Syntax
 ;;;; Syntax Table
 
-(defconst lpy-mode-syntax-table
-  (let ((table (copy-syntax-table lisp-mode-syntax-table)))
-    ;; List-likes
-    (modify-syntax-entry ?\{ "(}" table)
-    (modify-syntax-entry ?\} "){" table)
-    (modify-syntax-entry ?\[ "(]" table)
-    (modify-syntax-entry ?\] ")[" table)
-
-    ;; Quote Characters
-    (modify-syntax-entry ?\~ "'" table)
-
-    ;; Symbol Constituents
-    (modify-syntax-entry ?\, "_" table)
-    (modify-syntax-entry ?\| "_" table)
-    (modify-syntax-entry ?\# "_" table)
-
-    ;; Note that @ is a valid symbol token but in almost all usages we would
-    ;; rather the symbol for ~@foo to be recognized as foo and not @foo.
-    (modify-syntax-entry ?\@ "'" table)
-
-    table)
-  "The `lpy-mode' syntax table.")
-
 (defconst inferior-lpy-mode-syntax-table (copy-syntax-table lpy-mode-syntax-table)
   "`inferior-lpy-mode' inherits `lpy-mode-syntax-table'.")
 

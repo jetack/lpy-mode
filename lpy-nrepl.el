@@ -665,8 +665,13 @@ annotated from the LSP-shaped `items' the server reports (kind and
 from the buffer file's scope (the session scope without a file)."
   (when (lpy-nrepl-connected-p)
     (let* ((end (point))
+           ;; The symbol is bounded by `lpy-mode-syntax-table', the rule
+           ;; eglot's `bounds-of-thing-at-point' uses, so names such as
+           ;; `empty?' or `->foo' start where eglot's do.  Applied
+           ;; explicitly: the buffer may be in another mode.
            (symbol-start (save-excursion
-                           (skip-chars-backward "a-zA-Z0-9_\\-.*")
+                           (with-syntax-table lpy-mode-syntax-table
+                             (skip-syntax-backward "w_"))
                            (point)))
            (prefix (buffer-substring-no-properties symbol-start end))
            ;; Complete the word after the last dot, as LSP does: both
