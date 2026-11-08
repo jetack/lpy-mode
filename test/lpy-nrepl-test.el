@@ -664,14 +664,20 @@ EGLOT and NREPL are forms giving each stub's result."
 (defvar lpy-nrepl-test--requests nil
   "Words the fake LSP server was asked to complete, newest first.")
 
+(defvar lpy-nrepl-test--lsp-label "my-var"
+  "The one label `lpy-nrepl-test--incomplete-server' answers.")
+
 (defun lpy-nrepl-test--incomplete-server (word)
   "Fake LSP answer for WORD, as lispython marks it isIncomplete.
-filterText is WORD plus the rest of the label, spelled `my_var' until
-WORD holds a `-'."
+The label is `lpy-nrepl-test--lsp-label'.  filterText is WORD plus the
+rest of the label, spelled with `_' until WORD holds a `-'."
   (push word lpy-nrepl-test--requests)
-  (let ((spelling (if (string-search "-" word) "my-var" "my_var")))
-    (list (propertize "my-var" 'eglot--lsp-item
-                      `(:label "my-var" :kind 6
+  (let* ((label lpy-nrepl-test--lsp-label)
+         (spelling (if (string-search "-" word)
+                       label
+                     (string-replace "-" "_" label))))
+    (list (propertize label 'eglot--lsp-item
+                      `(:label ,label :kind 6
                         :filterText ,(concat word (substring spelling
                                                              (length word))))))))
 
@@ -680,7 +686,7 @@ WORD holds a `-'."
 As eglot's `local-cache', the table asks the server once, lazily, for
 the word at capf time and matches every later input against that answer."
   (let* ((end (point))
-         (beg (save-excursion (skip-chars-backward "a-z_-") (point)))
+         (beg (save-excursion (skip-chars-backward "A-Za-z_-") (point)))
          (word (buffer-substring-no-properties beg end))
          (cache :none))
     (list beg end
@@ -1012,11 +1018,11 @@ SENT is set to the prefix the client asked for."
                      :false-object nil))
 
 (defconst lpy-nrepl-test--reply-heapq-nl
-  "{\"op\": \"complete-result\", \"word\": \"nl\", \"completions\": [\"heapq.nlargest\"], \"items\": [{\"label\": \"nlargest\", \"kind\": 3}], \"id\": \"2\"}"
+  "{\"op\": \"complete-result\", \"word\": \"nl\", \"completions\": [\"heapq.nlargest\"], \"items\": [{\"label\": \"nlargest\", \"kind\": 3, \"filterText\": \"nlargest\"}], \"id\": \"6\"}"
   "Captured reply to prefix `heapq.nl'.")
 
 (defconst lpy-nrepl-test--reply-heapq-heap
-  "{\"op\": \"complete-result\", \"word\": \"heap\", \"completions\": [\"heapq.heapify\", \"heapq.heapify-max\", \"heapq.heappop\", \"heapq.heappop-max\", \"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\", \"heapq.heapreplace\", \"heapq.heapreplace-max\"], \"items\": [{\"label\": \"heapify\", \"kind\": 3}, {\"label\": \"heapify-max\", \"kind\": 3}, {\"label\": \"heappop\", \"kind\": 3}, {\"label\": \"heappop-max\", \"kind\": 3}, {\"label\": \"heappush\", \"kind\": 3}, {\"label\": \"heappush-max\", \"kind\": 3}, {\"label\": \"heappushpop\", \"kind\": 3}, {\"label\": \"heappushpop-max\", \"kind\": 3}, {\"label\": \"heapreplace\", \"kind\": 3}, {\"label\": \"heapreplace-max\", \"kind\": 3}], \"id\": \"3\"}"
+  "{\"op\": \"complete-result\", \"word\": \"heap\", \"completions\": [\"heapq.heapify\", \"heapq.heapify-max\", \"heapq.heappop\", \"heapq.heappop-max\", \"heapq.heappush\", \"heapq.heappush-max\", \"heapq.heappushpop\", \"heapq.heappushpop-max\", \"heapq.heapreplace\", \"heapq.heapreplace-max\"], \"items\": [{\"label\": \"heapify\", \"kind\": 3, \"filterText\": \"heapify\"}, {\"label\": \"heapify-max\", \"kind\": 3, \"filterText\": \"heapify-max\"}, {\"label\": \"heappop\", \"kind\": 3, \"filterText\": \"heappop\"}, {\"label\": \"heappop-max\", \"kind\": 3, \"filterText\": \"heappop-max\"}, {\"label\": \"heappush\", \"kind\": 3, \"filterText\": \"heappush\"}, {\"label\": \"heappush-max\", \"kind\": 3, \"filterText\": \"heappush-max\"}, {\"label\": \"heappushpop\", \"kind\": 3, \"filterText\": \"heappushpop\"}, {\"label\": \"heappushpop-max\", \"kind\": 3, \"filterText\": \"heappushpop-max\"}, {\"label\": \"heapreplace\", \"kind\": 3, \"filterText\": \"heapreplace\"}, {\"label\": \"heapreplace-max\", \"kind\": 3, \"filterText\": \"heapreplace-max\"}], \"id\": \"0\"}"
   "Captured reply to prefix `heapq.heap'.")
 
 (ert-deftest lpy-nrepl-test-dotted-capf-completes-word-after-dot ()
@@ -1073,9 +1079,11 @@ SENT is set to the prefix the client asked for."
             (should (member "heapify" names))
             (should (member "heapify-max" names))))))))
 
-(defun lpy-nrepl-test--item (label kind &optional description)
-  "Return a parsed `items' entry, as `json-parse-string' yields it."
-  `((label . ,label) (kind . ,kind)
+(defun lpy-nrepl-test--item (label kind &optional description filter-text)
+  "Return a parsed `items' entry, as `json-parse-string' yields it.
+FILTER-TEXT defaults to LABEL, the server's filterText for a word typed
+in the label's own spelling."
+  `((label . ,label) (kind . ,kind) (filterText . ,(or filter-text label))
     ,@(when description `((labelDetails . ((description . ,description)))))))
 
 (ert-deftest lpy-nrepl-test-capf-arrow-name-start ()
@@ -1242,6 +1250,155 @@ SENT is set to the prefix the client asked for."
         `((items . [,(lpy-nrepl-test--item "foo" 7 "")]))
       (should (equal (lpy-nrepl-test--annotations "fo" "foo")
                      '((" class" . class)))))))
+
+;;; Server-matched (filterText) completion
+
+(defconst lpy-nrepl-test--word-replies
+  '(
+    ("m"
+     . "{\"op\": \"complete-result\", \"word\": \"m\", \"completions\": [\"MemoryError\", \"ModuleNotFoundError\", \"MyClass\", \"map\", \"match\", \"max\", \"memoryview\", \"min\", \"my-fn\", \"my-var\"], \"items\": [{\"label\": \"MemoryError\", \"kind\": 7, \"filterText\": \"memoryError\"}, {\"label\": \"ModuleNotFoundError\", \"kind\": 7, \"filterText\": \"moduleNotFoundError\"}, {\"label\": \"MyClass\", \"kind\": 7, \"filterText\": \"myClass\"}, {\"label\": \"map\", \"kind\": 7, \"filterText\": \"map\"}, {\"label\": \"match\", \"kind\": 14, \"filterText\": \"match\", \"labelDetails\": {\"description\": \"special form\"}}, {\"label\": \"max\", \"kind\": 3, \"filterText\": \"max\"}, {\"label\": \"memoryview\", \"kind\": 7, \"filterText\": \"memoryview\"}, {\"label\": \"min\", \"kind\": 3, \"filterText\": \"min\"}, {\"label\": \"my-fn\", \"kind\": 3, \"filterText\": \"my-fn\"}, {\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my-var\"}], \"id\": \"0\"}")
+    ("my"
+     . "{\"op\": \"complete-result\", \"word\": \"my\", \"completions\": [\"MyClass\", \"my-fn\", \"my-var\"], \"items\": [{\"label\": \"MyClass\", \"kind\": 7, \"filterText\": \"myClass\"}, {\"label\": \"my-fn\", \"kind\": 3, \"filterText\": \"my-fn\"}, {\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my-var\"}], \"id\": \"1\"}")
+    ("my-"
+     . "{\"op\": \"complete-result\", \"word\": \"my-\", \"completions\": [\"my-fn\", \"my-var\"], \"items\": [{\"label\": \"my-fn\", \"kind\": 3, \"filterText\": \"my-fn\"}, {\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my-var\"}], \"id\": \"2\"}")
+    ("my-v"
+     . "{\"op\": \"complete-result\", \"word\": \"my-v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my-var\"}], \"id\": \"3\"}")
+    ("my_v"
+     . "{\"op\": \"complete-result\", \"word\": \"my_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"my_var\"}], \"id\": \"4\"}")
+    ("MY_v"
+     . "{\"op\": \"complete-result\", \"word\": \"MY_v\", \"completions\": [\"my-var\"], \"items\": [{\"label\": \"my-var\", \"kind\": 6, \"filterText\": \"MY_var\"}], \"id\": \"5\"}"))
+  "Replies captured from lispython's nREPL, keyed by the prefix asked.")
+
+(defmacro lpy-nrepl-test--with-captured-nrepl (sent &rest body)
+  "Run BODY with an nREPL answering each prefix with its captured reply.
+SENT collects the prefixes asked, newest first.  A prefix without a
+captured reply is an error."
+  (declare (indent 1))
+  `(cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+             ((symbol-function 'lpy-nrepl--file-fields) (lambda () nil))
+             ((symbol-function 'lpy-nrepl--send)
+              (lambda (msg &optional callback)
+                (let* ((prefix (alist-get 'prefix msg))
+                       (json (or (cdr (assoc prefix lpy-nrepl-test--word-replies))
+                                 (error "No captured reply to %S" prefix))))
+                  (push prefix ,sent)
+                  (funcall callback (lpy-nrepl-test--captured json))))))
+     ,@body))
+
+(defun lpy-nrepl-test--type-word (beg word)
+  "Turn the text from BEG to point into WORD, as typing it would."
+  (let ((typed (buffer-substring-no-properties beg (point))))
+    (if (string-prefix-p typed word)
+        (insert (substring word (length typed)))
+      (delete-region beg (point))
+      (insert word))))
+
+(defun lpy-nrepl-test--corfu-candidates (beg table)
+  "List TABLE's candidates for the text from BEG to point, as corfu does.
+The user's style is `basic' with no category override, so a candidate
+not prefixed by the input survives only through the style the table's
+category brings."
+  (let* ((input (buffer-substring-no-properties beg (point)))
+         (completion-styles '(basic))
+         (completion-category-overrides nil)
+         (metadata (completion-metadata input table nil))
+         (cands (completion-all-completions input table nil (length input)
+                                            metadata)))
+    ;; The last cdr is the base size.
+    (when cands (setcdr (last cands) nil))
+    cands))
+
+(defconst lpy-nrepl-test--typed-words '("m" "my" "my-" "my-v" "my_v" "MY_v")
+  "Keystrokes of a corfu session, ending in mixed spellings of `my-var'.")
+
+(ert-deftest lpy-nrepl-test-capf-never-blinks-nrepl-alone ()
+  ;; Defect: the nREPL table (or the user's style) filters the labels by
+  ;; the input, so the server's matches for another spelling (`my_v' for
+  ;; `my-var', `m' for `MyClass') are dropped and the list empties.
+  (let ((sent nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f " (car lpy-nrepl-test--typed-words))
+        (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-completion-at-point)))
+          (should (member "MyClass" (lpy-nrepl-test--corfu-candidates beg table)))
+          (dolist (word lpy-nrepl-test--typed-words)
+            (lpy-nrepl-test--type-word beg word)
+            (should (member "my-var" (lpy-nrepl-test--corfu-candidates beg table)))
+            (lpy-nrepl-test--corfu-candidates beg table))
+          ;; One request per word; an unchanged word asks nothing.
+          (should (equal (reverse sent) lpy-nrepl-test--typed-words)))))))
+
+(ert-deftest lpy-nrepl-test-capf-never-blinks-merged ()
+  ;; Defect: the merge lists the nREPL's candidates by label prefix, so
+  ;; at `my_v' the nREPL-only `my-var' leaves the list.
+  (skip-unless (require 'eglot nil t)) ; its `eglot-capf' style
+  (let ((sent nil)
+        (lpy-nrepl-test--lsp-label "my-value")
+        (lpy-nrepl-test--requests nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f " (car lpy-nrepl-test--typed-words))
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                  ((symbol-function 'eglot-completion-at-point)
+                   #'lpy-nrepl-test--caching-eglot-capf))
+          (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-completion-at-point)))
+            (dolist (word lpy-nrepl-test--typed-words)
+              (lpy-nrepl-test--type-word beg word)
+              (let ((cands (lpy-nrepl-test--corfu-candidates beg table)))
+                (should (member "my-var" cands))
+                (should (member "my-value" cands)))
+              (lpy-nrepl-test--corfu-candidates beg table))
+            (should (equal (reverse sent) lpy-nrepl-test--typed-words))
+            (should (equal (reverse lpy-nrepl-test--requests)
+                           lpy-nrepl-test--typed-words))))))))
+
+(ert-deftest lpy-nrepl-test-merged-capf-owner-survives-later-query ()
+  ;; Defect: the merge records the nREPL-only names per table and the
+  ;; record is rebuilt by each query, so after corfu's `test-completion'
+  ;; of the inserted text a candidate from the earlier listing is
+  ;; dispatched to eglot: eglot's annotation and no kind.
+  (lpy-nrepl-test--with-capfs (lpy-nrepl-test--eglot-capf)
+      (lpy-nrepl-test--nrepl-capf)
+    (pcase-let* ((`(,_ ,_ ,table . ,plist) (lpy-completion-at-point))
+                 (head (lpy-nrepl-test--find "head" (all-completions "hea" table))))
+      (should head)
+      (should (test-completion "heapify" table))
+      (should (equal (funcall (plist-get plist :annotation-function) head)
+                     " fn"))
+      (should (eq (funcall (plist-get plist :company-kind) head) 'function)))))
+
+(ert-deftest lpy-nrepl-test-capf-late-eglot-joins-mid-word ()
+  ;; Defect: mid-word the nREPL source ends at point and eglot at the
+  ;; symbol end, so in a session the nREPL started alone every merged
+  ;; re-run has other bounds and is dropped: eglot never joins.
+  (require 'thingatpt)
+  (skip-unless (boundp 'bounds-of-thing-at-point-provider-alist))
+  (let ((sent nil)
+        (eglot-ready nil))
+    (lpy-nrepl-test--with-captured-nrepl sent
+      (with-temp-buffer
+        (lpy-mode)
+        (insert "(f mx)")
+        (goto-char (- (point-max) 2))
+        (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                  ((symbol-function 'eglot-completion-at-point)
+                   (lambda ()
+                     (when eglot-ready
+                       (let ((b (or (bounds-of-thing-at-point 'symbol)
+                                    (cons (point) (point)))))
+                         (list (car b) (cdr b) (list "my-lsp-name")))))))
+          (pcase-let ((`(,beg ,_ ,table . ,_) (lpy-completion-at-point)))
+            (should (member "my-var" (all-completions "m" table nil)))
+            (setq eglot-ready t)
+            (insert "y")
+            (let ((cands (all-completions
+                          (buffer-substring-no-properties beg (point)) table nil)))
+              (should (member "my-lsp-name" cands))
+              (should (member "my-var" cands)))
+            ;; The prefix asked stays the text before point.
+            (should (equal sent '("my" "m")))))))))
 
 (provide 'lpy-nrepl-test)
 
