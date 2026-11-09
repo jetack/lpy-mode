@@ -35,6 +35,7 @@
 (require 'lpy-base)
 (require 'json)
 (require 'subr-x)
+(require 'thingatpt) ; `bounds-of-thing-at-point-provider-alist' is why Emacs 30 is required
 
 (declare-function run-lpy "lpy-shell" ())
 (declare-function lpy-shell-eval-current-form "lpy-shell" ())
@@ -667,7 +668,10 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; charset.  `lpy--word-span' follows the spec's steps (and its reference
 ;; interpreter, `spec_word_span' in lispython's tests/test_word_boundary.py).
 ;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
-;; Python's definition, and the buffer may be in another mode.
+;; Python's definition, and the buffer may be in another mode.  The `\w'/Nd
+;; classes come from the running Emacs's Unicode tables, which match the
+;; spec exactly on Emacs 30 (Unicode 15.1); a newer Emacs may also count
+;; characters assigned after the spec's version.
 
 (defconst lpy--word-boundary-rule
   '((unicode . "15.1.0")
@@ -1381,21 +1385,6 @@ private.  pyrefly sends it up front."
                                         :company-docsig))
                      nconc (list key value)))))))
 
-(defvar bounds-of-thing-at-point-provider-alist) ; thingatpt, Emacs 30+
-
-(defun lpy--lsp-syntax-table ()
-  "Return the buffer's syntax table with `.' as punctuation.
-eglot takes the completion bounds from `bounds-of-thing-at-point' on a
-symbol, and an LSP server completes the word after the last dot, with a
-text edit covering only that word.  Under the Lisp-derived mode table `.'
-is a symbol constituent, so the bounds would be `heapq.nl' and no
-candidate would match.  Only the eglot call uses this table: the mode
-table keeps `.' as a symbol character because sexp motion and font-lock
-depend on it."
-  (let ((table (copy-syntax-table (syntax-table))))
-    (modify-syntax-entry ?. "." table)
-    table))
-
 (defun lpy--merged-capf ()
   "Return the merged capf result of the eglot and nREPL sources.
 Merges the candidates of `eglot-completion-at-point', when eglot manages
@@ -1409,14 +1398,15 @@ sources available; a lone source is returned unmerged."
   (lpy--merge-capf-results
    (lpy--shorten-eglot-capf
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
-         (with-syntax-table (lpy--lsp-syntax-table)
-           ;; eglot's bounds are `bounds-of-thing-at-point' on a symbol;
-           ;; the provider gives them the nREPL source's start.  Emacs < 30
-           ;; ignores the alist and keeps the table's symbol bounds.
-           (let ((bounds-of-thing-at-point-provider-alist
-                  (cons (cons 'symbol #'lpy--completion-symbol-bounds)
-                        (bound-and-true-p bounds-of-thing-at-point-provider-alist))))
-             (eglot-completion-at-point)))))
+         ;; eglot's bounds are `bounds-of-thing-at-point' on a symbol, its
+         ;; only syntax-dependent step.  The provider is consulted first
+         ;; and never returns nil, so it alone decides the bounds (the
+         ;; nREPL source's start) and the syntax table is never read.
+         ;; This alist is why the package needs Emacs 30.
+         (let ((bounds-of-thing-at-point-provider-alist
+                (cons (cons 'symbol #'lpy--completion-symbol-bounds)
+                      bounds-of-thing-at-point-provider-alist)))
+           (eglot-completion-at-point))))
    (lpy-nrepl-completion-at-point)))
 
 (defun lpy--candidate-generation (cand)
