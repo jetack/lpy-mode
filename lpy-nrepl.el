@@ -35,6 +35,7 @@
 (require 'lpy-base)
 (require 'json)
 (require 'subr-x)
+(require 'thingatpt) ; `bounds-of-thing-at-point-provider-alist' is why Emacs 30 is required
 
 (declare-function run-lpy "lpy-shell" ())
 (declare-function lpy-shell-eval-current-form "lpy-shell" ())
@@ -1381,8 +1382,6 @@ private.  pyrefly sends it up front."
                                         :company-docsig))
                      nconc (list key value)))))))
 
-(defvar bounds-of-thing-at-point-provider-alist) ; thingatpt, Emacs 30+
-
 (defun lpy--lsp-syntax-table ()
   "Return the buffer's syntax table with `.' as punctuation.
 eglot takes the completion bounds from `bounds-of-thing-at-point' on a
@@ -1411,11 +1410,10 @@ sources available; a lone source is returned unmerged."
     (and (fboundp 'eglot-managed-p) (eglot-managed-p)
          (with-syntax-table (lpy--lsp-syntax-table)
            ;; eglot's bounds are `bounds-of-thing-at-point' on a symbol;
-           ;; the provider gives them the nREPL source's start.  Emacs < 30
-           ;; ignores the alist and keeps the table's symbol bounds.
+           ;; the provider gives them the nREPL source's start.
            (let ((bounds-of-thing-at-point-provider-alist
                   (cons (cons 'symbol #'lpy--completion-symbol-bounds)
-                        (bound-and-true-p bounds-of-thing-at-point-provider-alist))))
+                        bounds-of-thing-at-point-provider-alist)))
              (eglot-completion-at-point)))))
    (lpy-nrepl-completion-at-point)))
 

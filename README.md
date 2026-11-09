@@ -43,7 +43,7 @@ pip install lispython
 
 ## Requirements
 
-- Emacs 27+ (for `json-serialize` / `json-parse-string`)
+- Emacs 30.1+ (eglot completion bounds via `bounds-of-thing-at-point-provider-alist`, and the Unicode 15.1 tables the word-boundary spec needs)
 - [lispython](https://pypi.org/project/lispython/) (`lpy --nrepl` server)
 - [dash.el](https://github.com/magnars/dash.el)
 - [s.el](https://github.com/magnars/s.el)

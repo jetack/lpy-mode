@@ -1143,6 +1143,35 @@ SENT is set to the prefix the client asked for."
                          #'string<)
                    (sort (mapcar #'car lpy--word-boundary-rule) #'string<)))))
 
+;; First Emacs shipping each Unicode version (from Emacs's NEWS files).
+(defconst lpy-nrepl-test--unicode-emacs
+  '(("13.0" . "27.1") ("14.0" . "28.1") ("15.0" . "29.1") ("15.1" . "30.1")))
+
+(ert-deftest lpy-nrepl-test-declared-emacs-meets-completion-needs ()
+  ;; Defect: the header lets Emacs < 30 install the package, where eglot
+  ;; ignores the bounds provider and the merge drops a source, and older
+  ;; Unicode tables mis-classify the spec's `\\w'/Nd.
+  (require 'lisp-mnt)
+  (let* ((root (file-name-directory
+                (directory-file-name
+                 (file-name-directory lpy-nrepl-test--word-spec-file))))
+         (requires (with-temp-buffer
+                     (insert-file-contents (expand-file-name "lpy-mode.el" root))
+                     (car (read-from-string (lm-header "package-requires")))))
+         (declared (cadr (assq 'emacs requires)))
+         (unicode (alist-get 'unicode
+                             (alist-get 'rule (lpy-nrepl-test--word-spec))))
+         (unicode-mm (mapconcat #'identity
+                                (seq-take (split-string unicode "\\.") 2) "."))
+         (unicode-emacs (cdr (assoc unicode-mm lpy-nrepl-test--unicode-emacs))))
+    (should declared)
+    ;; `bounds-of-thing-at-point-provider-alist' is new in Emacs 30.1.
+    (should (version<= "30.1" declared))
+    (unless unicode-emacs
+      (ert-fail (format "Unicode %s is not in `lpy-nrepl-test--unicode-emacs'; add the Emacs that ships it"
+                        unicode)))
+    (should (version<= unicode-emacs declared))))
+
 (ert-deftest lpy-nrepl-test-word-spec-file-is-lispythons ()
   ;; Defect: lispython publishes a new word-boundary spec and the committed
   ;; copy (with the rule built from it) is left stale.
@@ -1261,7 +1290,6 @@ in the label's own spelling."
   ;; Defect: eglot's symbol bounds start at `,' while the nREPL source
   ;; starts after it, so the merge drops the nREPL-only name.
   (require 'thingatpt)
-  (skip-unless (boundp 'bounds-of-thing-at-point-provider-alist))
   (require 'lpy-mode)
   (let (sent)
     (lpy-nrepl-test--with-reply sent
@@ -1573,7 +1601,6 @@ The user's style is `lpy-nrepl-test--with-user-style''s."
   ;; symbol end, so in a session the nREPL started alone every merged
   ;; re-run has other bounds and is dropped: eglot never joins.
   (require 'thingatpt)
-  (skip-unless (boundp 'bounds-of-thing-at-point-provider-alist))
   (let ((sent nil)
         (eglot-ready nil))
     (lpy-nrepl-test--with-captured-nrepl sent
