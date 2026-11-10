@@ -309,8 +309,10 @@ a chunk need not end a line.  Any other entry starts on a fresh line."
            (message "lpy-nrepl: failed to parse response: %s" (error-message-string err))))))))
 
 (defconst lpy-nrepl--reconnect-hint
-  "C-c C-z to reconnect, or to start a server if ours is gone"
-  "Log hint for a lost connection, true whether or not our server runs.")
+  "C-c C-z to connect to our server, or start one"
+  "Log hint for a lost connection, true whether or not our server runs.
+\\[lpy-nrepl-switch-to-repl] connects to a live server of ours, and
+otherwise offers to start one.")
 
 (defconst lpy-nrepl--restart-hint
   "C-c C-z or M-x lpy-nrepl-restart to start a new one"
@@ -340,14 +342,17 @@ dropped (the Emacs-owned server's death must not drop a connection to
 another server); WHAT is logged either way.  Pending callbacks and
 in-flight evals are cleared with the connection, and the log line says
 how many requests will never be answered.  HINT, from the caller (who
-knows what is still running), ends the line when a connection of ours was
-dropped or, with PORT, none was left; a live connection to another server
-gets no hint."
+knows what is still running), ends the line when the current connection
+was dropped or, with PORT, there was none; a current connection to another
+server gets no hint."
   (let* ((conn lpy-nrepl--connection)
          (ours (and conn
                     (or (null port)
                         (equal (process-contact conn :service) port))))
          (pending (if ours (length lpy-nrepl--pending-callbacks) 0))
+         ;; The connection's sentinel can run before the server's, leaving no
+         ;; connection when the server-died line is logged; it still needs
+         ;; its hint.
          (hint (and hint (or ours (and port (null conn)))
                     (concat "; " hint))))
     (lpy-nrepl--log

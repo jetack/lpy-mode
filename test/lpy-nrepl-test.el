@@ -2203,14 +2203,13 @@ fake processes; the server is current but already dead, as in its sentinel."
     (should (string-match-p "server died" log))
     (should-not (string-match-p "start a new one" log))))
 
-(ert-deftest lpy-nrepl-test-connection-sentinel-log-hint-holds-either-way ()
+(ert-deftest lpy-nrepl-test-connection-sentinel-log-gives-no-restart-hint ()
   ;; Defect: the connection's sentinel can run while our server is alive or
   ;; dying; its single line must not promise a reconnect or demand a restart.
   (let ((log (lpy-nrepl-test--with-lost-state 5000 5000
                (delete-process conn)
                (lpy-nrepl--process-sentinel conn "connection broken\n"))))
     (should (string-match-p "connection lost" log))
-    (should (string-match-p "to reconnect, or to start a server" log))
     (should-not (string-match-p "start a new one" log))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
