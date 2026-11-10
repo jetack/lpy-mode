@@ -10,6 +10,9 @@
 ;; source is otherwise loaded instead, and the tests silently run old code.
 ;; LPY_TEST_LSP_PYTHON=<a python with lispython> also runs the live tests,
 ;; among them the check that test/word-boundary.json is lispython's spec.
+;; LPY_TEST_NREPL_LPY=<an lpy executable> runs the live nREPL tests (start,
+;; kill, restart; the streaming/interrupt one needs lispython with nREPL
+;; streaming and interrupt support and fails, bounded, on an older one).
 ;; Refresh that file with `python -m lispy.word_boundary > test/word-boundary.json'
 ;; and copy its `rule' into `lpy--word-boundary-rule'.
 
@@ -64,10 +67,56 @@
 ;;; Connection swapping
 
 (defun lpy-nrepl-test--server ()
-  "Start a local TCP server on a free port and return it."
-  (make-network-process :name "lpy-nrepl-test-server" :server t
-                        :service t :host "127.0.0.1" :family 'ipv4
-                        :noquery t))
+  "Start a local TCP server on a free port and return it.
+The server records its accepted clients (`lpy-nrepl-test--client') and
+the text they send (`lpy-nrepl-test--requests')."
+  (make-network-process
+   :name "lpy-nrepl-test-server" :server t
+   :service t :host "127.0.0.1" :family 'ipv4
+   :noquery t
+   :log (lambda (server client _message)
+          (process-put client 'lpy-test-server server)
+          (process-put server 'lpy-test-clients
+                       (cons client (process-get server 'lpy-test-clients))))
+   :filter (lambda (client text)
+             (let ((server (process-get client 'lpy-test-server)))
+               (process-put server 'lpy-test-received
+                            (concat (process-get server 'lpy-test-received)
+                                    text))))))
+
+(defun lpy-nrepl-test--client (server)
+  "Return SERVER's newest accepted client connection."
+  (car (process-get server 'lpy-test-clients)))
+
+(defun lpy-nrepl-test--requests (server &optional op)
+  "Return the requests SERVER received, oldest first, as alists.
+With OP, only the requests of that op."
+  (cl-loop for line in (split-string (or (process-get server 'lpy-test-received) "")
+                                     "\n" t)
+           for msg = (json-parse-string line :object-type 'alist
+                                        :false-object nil)
+           when (or (null op) (equal (alist-get 'op msg) op))
+           collect msg))
+
+(defun lpy-nrepl-test--wait (pred &optional seconds)
+  "Process input until PRED returns non-nil or SECONDS (default 3) pass.
+Return PRED's last value."
+  (let ((deadline (+ (float-time) (or seconds 3)))
+        value)
+    (while (and (not (setq value (funcall pred)))
+                (< (float-time) deadline))
+      (accept-process-output nil 0.02))
+    value))
+
+(defun lpy-nrepl-test--answer (server reply)
+  "Send REPLY, an alist, from SERVER's client connection to the client."
+  (process-send-string (lpy-nrepl-test--client server)
+                       (concat (json-serialize reply) "\n")))
+
+(defun lpy-nrepl-test--log-text ()
+  "Return the REPL log's text."
+  (with-current-buffer (lpy-nrepl--repl-buffer)
+    (buffer-substring-no-properties (point-min) (point-max))))
 
 (defun lpy-nrepl-test--port (server)
   "Return the port SERVER listens on."
@@ -87,20 +136,37 @@ The globals and the REPL log buffer name are let-bound; processes and the
 test log buffer are cleaned up afterwards."
   (declare (indent 1))
   `(let ((lpy-nrepl--repl-buffer-name lpy-nrepl-test--servers-buffer-name)
+         (lpy-nrepl--server-buffer-name " *lpy-nrepl-test-server-output*")
          (lpy-nrepl--connection nil)
+         (lpy-nrepl--server-process nil)
          (lpy-nrepl--pending-callbacks nil)
+         (lpy-nrepl--in-flight-evals nil)
+         (lpy-nrepl--ignored-ids nil)
+         (lpy-nrepl--latest-by-op nil)
+         (lpy-nrepl--answers-during-eval nil)
          (lpy-nrepl--response-buffer "")
          (lpy-nrepl-test--messages nil)
          ,@(mapcar (lambda (v) `(,v (lpy-nrepl-test--server))) vars))
      (cl-letf (((symbol-function 'message)
                 (lambda (fmt &rest args)
-                  (push (apply #'format fmt args) lpy-nrepl-test--messages))))
+                  (when fmt
+                    (push (apply #'format fmt args) lpy-nrepl-test--messages)))))
        (unwind-protect (progn ,@body)
+         (when lpy-nrepl--server-process
+           (let ((proc lpy-nrepl--server-process))
+             (setq lpy-nrepl--server-process nil)
+             (delete-process proc)))
          (when lpy-nrepl--connection (delete-process lpy-nrepl--connection))
-         ,@(mapcar (lambda (v) `(delete-process ,v)) vars)
+         ,@(mapcar (lambda (v)
+                     `(progn
+                        (mapc #'delete-process (process-get ,v 'lpy-test-clients))
+                        (delete-process ,v)))
+                   vars)
          (accept-process-output nil 0.05)
-         (when (get-buffer lpy-nrepl-test--servers-buffer-name)
-           (kill-buffer lpy-nrepl-test--servers-buffer-name))))))
+         (dolist (name (list lpy-nrepl-test--servers-buffer-name
+                             lpy-nrepl--server-buffer-name))
+           (when (get-buffer name)
+             (kill-buffer name)))))))
 
 (ert-deftest lpy-nrepl-test-with-servers-spares-live-repl-buffer ()
   ;; Never writes to a pre-existing real buffer: only compares it before and
@@ -159,8 +225,9 @@ test log buffer are cleaned up afterwards."
     (lpy-nrepl-connect (lpy-nrepl-test--port srv))
     (let ((proc lpy-nrepl--connection))
       (setq lpy-nrepl--pending-callbacks '((1 . ignore)))
-      (lpy-nrepl--process-sentinel proc "connection broken by remote peer\n")
-      (should-not lpy-nrepl--connection)
+      (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--client srv))))
+      (delete-process (lpy-nrepl-test--client srv))
+      (should (lpy-nrepl-test--wait (lambda () (null lpy-nrepl--connection))))
       (should-not lpy-nrepl--pending-callbacks)
       (should-not (process-live-p proc))
       (should-not (memq proc (process-list))))))
@@ -475,10 +542,11 @@ buffer without a file; bind `lpy-file' to the first one's exact path."
       (lpy-nrepl-connect (lpy-nrepl-test--port srv))
       (setq lpy-nrepl--scope "/tmp/a.lpy")
       (setq lpy-nrepl-test--messages nil)
-      (lpy-nrepl--process-sentinel lpy-nrepl--connection
-                                   "connection broken by remote peer\n")
+      (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--client srv))))
+      (delete-process (lpy-nrepl-test--client srv))
+      (should (lpy-nrepl-test--wait (lambda () (null lpy-nrepl--connection))))
       (should-not lpy-nrepl--scope)
-      (should (string-match-p "disconnected (connection broken"
+      (should (string-match-p "connection lost (connection broken"
                               (car lpy-nrepl-test--messages)))
       (with-current-buffer (lpy-nrepl--repl-buffer)
         (should (string-suffix-p ";; scope: __main__ (connection changed)\n"
@@ -1625,6 +1693,279 @@ The user's style is `lpy-nrepl-test--with-user-style''s."
               (should (member "my-var" cands)))
             ;; The prefix asked stays the text before point.
             (should (equal sent '("my" "m")))))))))
+
+;;; Busy server: completion, streaming, interrupt, death and restart
+
+(defun lpy-nrepl-test--table-calls (table)
+  "Make the three table calls corfu makes for \"hea\" in TABLE.
+Return the seconds they took."
+  (let ((start (float-time)))
+    (all-completions "hea" table)
+    (try-completion "hea" table)
+    (test-completion "hea" table)
+    (- (float-time) start)))
+
+(ert-deftest lpy-nrepl-test-capf-unanswered-asks-once ()
+  ;; Defect: an unanswered `complete' is re-sent and re-waited for on every
+  ;; table call, so one keystroke against a busy server stalls Emacs for a
+  ;; second per call, from corfu's timer where C-g cannot break it.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (with-temp-buffer
+      (insert "hea")
+      (let ((elapsed (lpy-nrepl-test--table-calls
+                      (nth 2 (lpy-nrepl-completion-at-point)))))
+        (should (< elapsed 1.5))
+        (lpy-nrepl-test--wait #'ignore 0.2)
+        (should (= (length (lpy-nrepl-test--requests srv "complete")) 1))))))
+
+(ert-deftest lpy-nrepl-test-capf-during-eval-does-not-wait ()
+  ;; Defect: completion waits for a server that answers in order while an
+  ;; eval runs, so every keystroke during the eval stalls.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (lpy-nrepl-eval-string "(while True (pass))")
+    (should lpy-nrepl--in-flight-evals)
+    (with-temp-buffer
+      (insert "hea")
+      (let ((elapsed (lpy-nrepl-test--table-calls
+                      (nth 2 (lpy-nrepl-completion-at-point)))))
+        (should (< elapsed 0.3))
+        (lpy-nrepl-test--wait #'ignore 0.2)
+        (should (<= (length (lpy-nrepl-test--requests srv "complete")) 1))))))
+
+(ert-deftest lpy-nrepl-test-capf-during-eval-waits-on-concurrent-server ()
+  ;; Defect: a server that answers completion while an eval runs (a
+  ;; streaming lispython) still gets no wait, so no candidate ever shows
+  ;; during a long eval.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (lpy-nrepl-eval-string "(while True (pass))")
+    (let ((answer-next
+           (lambda ()
+             (let ((req (car (last (lpy-nrepl-test--requests srv "complete")))))
+               (lpy-nrepl-test--answer
+                srv `((id . ,(alist-get 'id req)) (op . "complete-result")
+                      (items . [((label . "heapify") (kind . 3))])))))))
+      (with-temp-buffer
+        (insert "hea")
+        ;; The first ask, unanswered in time, teaches nothing yet.
+        (all-completions "hea" (nth 2 (lpy-nrepl-completion-at-point)))
+        (should (lpy-nrepl-test--wait
+                 (lambda () (lpy-nrepl-test--requests srv "complete"))))
+        (funcall answer-next)
+        (should (lpy-nrepl-test--wait (lambda () lpy-nrepl--answers-during-eval)))
+        (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
+          (run-at-time 0.1 nil answer-next)
+          (should (equal (all-completions "hea" table) '("heapify"))))))))
+
+(ert-deftest lpy-nrepl-test-evals-request-streaming ()
+  ;; Defect: an eval or load-file sent without the stream flag gets no
+  ;; interim output, so a long eval shows nothing until it ends.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (let ((file (make-temp-file "lpy-nrepl-stream-" nil ".lpy")))
+      (unwind-protect
+          (with-current-buffer (find-file-noselect file)
+            (unwind-protect
+                (progn
+                  (lpy-nrepl-eval-string "(+ 1 2)")
+                  (lpy-nrepl-eval-buffer))
+              (set-buffer-modified-p nil)
+              (kill-buffer)))
+        (delete-file file)))
+    (should (lpy-nrepl-test--wait
+             (lambda () (lpy-nrepl-test--requests srv "load-file"))))
+    (dolist (op '("eval" "load-file"))
+      (let ((reqs (lpy-nrepl-test--requests srv op)))
+        (should (= (length reqs) 1))
+        (should (eq (alist-get 'stream (car reqs)) t))))))
+
+(ert-deftest lpy-nrepl-test-out-messages-stream-before-final-reply ()
+  ;; Defect: the first interim `out' message is taken for the final reply:
+  ;; it consumes the callback, the output is logged as raw JSON, and the
+  ;; real result is then dropped as unsolicited.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (let* ((finals 0)
+           (id (lpy-nrepl--send
+                '((op . "eval") (code . "(loop)"))
+                (lambda (response)
+                  (cl-incf finals)
+                  (let ((lpy-nrepl--eval-buffer nil))
+                    (lpy-nrepl--display-eval-result response))))))
+      (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--requests srv))))
+      (lpy-nrepl-test--answer srv `((id . ,id) (op . "out") (stdout . "tick\n")))
+      (lpy-nrepl-test--answer srv `((id . ,id) (op . "out") (stdout . "tock")))
+      (should (lpy-nrepl-test--wait
+               (lambda () (string-match-p "tick\ntock\\'" (lpy-nrepl-test--log-text)))))
+      (should (= finals 0))
+      (should (equal lpy-nrepl--in-flight-evals (list id)))
+      (should-not (string-match-p "\"out\"" (lpy-nrepl-test--log-text)))
+      (lpy-nrepl-test--answer srv `((id . ,id) (op . "eval-result") (value . "None")
+                                    (stdout . "")))
+      (should (lpy-nrepl-test--wait (lambda () (= finals 1))))
+      (should-not lpy-nrepl--in-flight-evals)
+      ;; The value starts its own line after an unterminated chunk.
+      (should (string-suffix-p "tick\ntock\nNone\n" (lpy-nrepl-test--log-text))))))
+
+(ert-deftest lpy-nrepl-test-final-reply-output-still-shown ()
+  ;; Defect: with output expected as interim messages, a server without
+  ;; streaming (all output in the final reply) shows none of it.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (lpy-nrepl-eval-string "(do (print \"a\") (print \"b\") 3)")
+    (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--requests srv "eval"))))
+    (lpy-nrepl-test--answer
+     srv `((id . ,(alist-get 'id (car (lpy-nrepl-test--requests srv "eval"))))
+           (op . "eval-result") (value . "3") (stdout . "a\nb\n")))
+    (should (lpy-nrepl-test--wait
+             (lambda () (string-suffix-p "a\nb\n3\n" (lpy-nrepl-test--log-text)))))))
+
+(ert-deftest lpy-nrepl-test-interrupt-names-running-eval ()
+  ;; Defect: the interrupt names the wrong request (the newest, queued one
+  ;; instead of the running, oldest one), names none, or is sent with no
+  ;; eval running; an old server's refusal is not explained.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (lpy-nrepl-interrupt)
+    (should (equal (car lpy-nrepl-test--messages) "No evaluation running"))
+    (let* ((first (lpy-nrepl--send '((op . "eval") (code . "(a)")) #'ignore))
+           (second (lpy-nrepl--send '((op . "eval") (code . "(b)")) #'ignore)))
+      (lpy-nrepl-interrupt)
+      (should (lpy-nrepl-test--wait
+               (lambda () (lpy-nrepl-test--requests srv "interrupt"))))
+      (let ((reqs (lpy-nrepl-test--requests srv "interrupt")))
+        (should (= (length reqs) 1))
+        (should (equal (alist-get 'interrupt-id (car reqs)) first))
+        ;; Only the eval requests went out before: none was an interrupt.
+        (should (= (length (lpy-nrepl-test--requests srv)) 3))
+        (lpy-nrepl-test--answer srv `((id . ,(alist-get 'id (car reqs)))
+                                      (op . "error")
+                                      (error . "unknown op: interrupt"))))
+      (should (lpy-nrepl-test--wait
+               (lambda () (string-match-p "too old" (car lpy-nrepl-test--messages)))))
+      (lpy-nrepl-interrupt t)
+      (should (lpy-nrepl-test--wait
+               (lambda () (= (length (lpy-nrepl-test--requests srv "interrupt")) 3))))
+      (should (equal (mapcar (lambda (r) (alist-get 'interrupt-id r))
+                             (cdr (lpy-nrepl-test--requests srv "interrupt")))
+                     (list first second))))))
+
+(ert-deftest lpy-nrepl-test-connection-death-is-logged-and-cleared ()
+  ;; Defect: a server dying mid-eval leaves its callbacks and the eval in
+  ;; flight forever, with nothing in the REPL log saying so.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (lpy-nrepl-eval-string "(while True (pass))")
+    (should lpy-nrepl--in-flight-evals)
+    (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--client srv))))
+    (delete-process (lpy-nrepl-test--client srv))
+    (should (lpy-nrepl-test--wait (lambda () (not (lpy-nrepl-connected-p)))))
+    (should (string-match-p "connection lost .* 1 pending request(s) dropped"
+                            (lpy-nrepl-test--log-text)))
+    (should-not lpy-nrepl--pending-callbacks)
+    (should-not lpy-nrepl--in-flight-evals)
+    (should-not lpy-nrepl--connection)))
+
+(defun lpy-nrepl-test--fake-interpreter (dir port)
+  "Write into DIR a fake `lpy' announcing PORT and then sleeping; return it."
+  (let ((script (expand-file-name "fake-lpy" dir)))
+    (with-temp-file script
+      (insert "#!/bin/sh\n"
+              (format "echo 'nREPL server started on 127.0.0.1:%d'\n" port)
+              "exec sleep 30\n"))
+    (set-file-modes script #o755)
+    script))
+
+(ert-deftest lpy-nrepl-test-start-ignores-dead-servers-port-line ()
+  ;; Defect: start reads the port from the server buffer from its top, so
+  ;; after a server death it finds the dead server's line and connects to
+  ;; that port; and the death leaves `lpy-nrepl--server-process' set, so no
+  ;; new server can start without restarting Emacs.
+  (lpy-nrepl-test--with-servers (srv)
+    (let* ((dir (make-temp-file "lpy-nrepl-fake-" t))
+           (port (lpy-nrepl-test--port srv))
+           (lpy-nrepl--interpreter (lpy-nrepl-test--fake-interpreter dir port)))
+      (unwind-protect
+          (progn
+            (with-current-buffer (get-buffer-create lpy-nrepl--server-buffer-name)
+              (insert "nREPL server started on 127.0.0.1:1\n"))
+            (lpy-nrepl-start)
+            (should (lpy-nrepl-test--wait #'lpy-nrepl-connected-p))
+            (should (equal (process-contact lpy-nrepl--connection :service) port))
+            (signal-process lpy-nrepl--server-process 'KILL)
+            (should (lpy-nrepl-test--wait (lambda () (null lpy-nrepl--server-process))))
+            (should (lpy-nrepl-test--wait (lambda () (not (lpy-nrepl-connected-p)))))
+            (should (string-match-p "nREPL server died (killed"
+                                    (lpy-nrepl-test--log-text)))
+            (lpy-nrepl-start)
+            (should (lpy-nrepl-test--wait #'lpy-nrepl-connected-p))
+            (should (equal (process-contact lpy-nrepl--connection :service) port)))
+        (delete-directory dir t)))))
+
+;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
+
+(defun lpy-nrepl-test--live-lpy ()
+  "Return the `lpy' named by LPY_TEST_NREPL_LPY, or skip the test."
+  (let ((lpy (getenv "LPY_TEST_NREPL_LPY")))
+    (unless (and lpy (file-executable-p lpy))
+      (ert-skip "LPY_TEST_NREPL_LPY names no executable lpy"))
+    lpy))
+
+(defmacro lpy-nrepl-test--with-live-server (&rest body)
+  "Run BODY connected to a fresh `lpy --nrepl' started in a temp directory.
+The server is killed afterwards."
+  (declare (indent 0))
+  `(let ((lpy (lpy-nrepl-test--live-lpy)))
+     (lpy-nrepl-test--with-servers ()
+       (let* ((dir (file-name-as-directory (make-temp-file "lpy-nrepl-live-" t)))
+              (default-directory dir)
+              (lpy-nrepl--interpreter lpy))
+         (unwind-protect
+             (progn
+               (lpy-nrepl-start)
+               (should (lpy-nrepl-test--wait #'lpy-nrepl-connected-p 20))
+               ,@body)
+           (delete-directory dir t))))))
+
+(defun lpy-nrepl-test--live-sum ()
+  "Eval (+ 1 2) on the live server and assert it yields 3."
+  (lpy-nrepl-eval-string "(+ 1 2)")
+  (should (lpy-nrepl-test--wait
+           (lambda () (string-match-p "^3$" (lpy-nrepl-test--log-text))))))
+
+(ert-deftest lpy-nrepl-test-live-endless-eval-streams-and-interrupts ()
+  ;; Defect: C-c C-b on an endless printing loop shows no output and can
+  ;; only be stopped by killing the server.
+  (lpy-nrepl-test--with-live-server
+    (with-temp-buffer
+      (insert "(import time)\n(while True (print \"tick\") (time.sleep 0.05))\n")
+      (let ((start (float-time)))
+        (lpy-nrepl-eval-buffer-contents)
+        (should (< (- (float-time) start) 0.5))))
+    (should (lpy-nrepl-test--wait
+             (lambda () (string-match-p "^tick$" (lpy-nrepl-test--log-text)))))
+    (should lpy-nrepl--in-flight-evals)
+    (lpy-nrepl-interrupt)
+    (should (lpy-nrepl-test--wait (lambda () (null lpy-nrepl--in-flight-evals))))
+    (should (string-match-p "KeyboardInterrupt" (lpy-nrepl-test--log-text)))
+    (should-not (cl-some (lambda (m) (string-match-p "too old\\|failed" m))
+                         lpy-nrepl-test--messages))
+    (lpy-nrepl-test--live-sum)))
+
+(ert-deftest lpy-nrepl-test-live-killed-server-restarts ()
+  ;; Defect: after the server is killed mid-eval, nREPL stays dead until
+  ;; Emacs restarts (a stale server process, or a stale port).
+  (lpy-nrepl-test--with-live-server
+    (lpy-nrepl-eval-string "(do (import time) (while True (time.sleep 0.05)))")
+    (signal-process lpy-nrepl--server-process 'KILL)
+    (should (lpy-nrepl-test--wait (lambda () (null lpy-nrepl--server-process))))
+    (should (lpy-nrepl-test--wait (lambda () (not (lpy-nrepl-connected-p)))))
+    (should-not lpy-nrepl--in-flight-evals)
+    (lpy-nrepl-start)
+    (should (lpy-nrepl-test--wait #'lpy-nrepl-connected-p 20))
+    (lpy-nrepl-test--live-sum)))
 
 (provide 'lpy-nrepl-test)
 
