@@ -454,8 +454,7 @@ tracked in flight until their final reply.  Return the request id."
     ;; runs timers and process filters: a nested newer request must find
     ;; this one already superseded (not be superseded by it afterwards),
     ;; and a reply read meanwhile must be logged after its input.  A send
-    ;; that fails or is quit undoes the registration, logs it and
-    ;; re-signals.
+    ;; that fails undoes the registration, logs it and re-signals.
     (when code
       (lpy-nrepl--log "input" code))
     (when eval-p
@@ -466,17 +465,21 @@ tracked in flight until their final reply.  Return the request id."
     (setq undo (lpy-nrepl--supersede op id))
     (condition-case err
         (process-send-string lpy-nrepl--connection (concat json-str "\n"))
-      ((error quit)
+      (error
        (setq lpy-nrepl--pending-callbacks
              (assoc-delete-all id lpy-nrepl--pending-callbacks))
        (lpy-nrepl--finish-request id)
        (when undo
          (lpy-nrepl--unsupersede undo))
        (lpy-nrepl--log "error"
-                       (if (eq (car err) 'quit)
-                           ";; send interrupted"
-                         (format ";; send failed: %s"
-                                 (error-message-string err))))
+                       (format ";; send failed: %s" (error-message-string err)))
+       (signal (car err) (cdr err)))
+      ;; A quit lands while Emacs waits with the unwritten rest of the line
+      ;; queued, which the next send writes: the request may still run, and
+      ;; the stream may hold half a line, so the connection is dropped.
+      (quit
+       (lpy-nrepl--connection-lost
+        "send interrupted; the request may be half-sent")
        (signal (car err) (cdr err))))
     id))
 

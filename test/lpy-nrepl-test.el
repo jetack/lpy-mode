@@ -2133,32 +2133,39 @@ SEND-FN is called with the sent string."
                                 nil nil #'equal)
                      a)))))
 
-(ert-deftest lpy-nrepl-test-quit-send-is-undone ()
-  ;; Defect: C-g during a blocking send skips the cleanup, so the unsent
-  ;; request keeps its callback and superseding, and its eval stays in
-  ;; flight.
-  (let ((quit-p nil))
-    (lpy-nrepl-test--with-send-stub
-        (lambda (_str) (when quit-p (signal 'quit nil)))
-      (let ((a (lpy-nrepl--send '((op . "complete")) #'ignore)))
-        (setq quit-p t)
-        (should (eq (condition-case nil
-                        (lpy-nrepl--send '((op . "complete")) #'ignore)
-                      (quit 'quit))
-                    'quit))
-        (should (eq (condition-case nil
-                        (lpy-nrepl--send '((op . "eval") (code . "x")) #'ignore)
-                      (quit 'quit))
-                    'quit))
-        (should (equal (mapcar #'car lpy-nrepl--pending-callbacks) (list a)))
-        (should-not lpy-nrepl--ignored-ids)
-        (should-not lpy-nrepl--in-flight-evals)
-        (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
-                                  nil nil #'equal)
-                       a))
-        (should (string-match-p ";; send interrupted"
-                                (with-current-buffer (lpy-nrepl--repl-buffer)
-                                  (buffer-string))))))))
+(ert-deftest lpy-nrepl-test-quit-send-drops-connection ()
+  ;; Defect: C-g during a blocking send undoes the request as if unsent,
+  ;; but Emacs still writes the queued rest of its line on the next send,
+  ;; so the server runs an eval the client no longer tracks (or the stream
+  ;; holds half a line).
+  (let ((quit-p nil)
+        (conn (make-pipe-process :name "lpy-nrepl-test-conn" :noquery t))
+        (server (make-pipe-process :name "lpy-nrepl-test-srv" :noquery t)))
+    (unwind-protect
+        (lpy-nrepl-test--with-send-stub
+            (lambda (_str) (when quit-p (signal 'quit nil)))
+          (let ((lpy-nrepl--server-process server)
+                (lpy-nrepl--scope nil))
+            (setq lpy-nrepl--connection conn)
+            (lpy-nrepl--send '((op . "complete")) #'ignore)
+            (setq quit-p t)
+            (should (eq (condition-case nil
+                            (lpy-nrepl--send '((op . "eval") (code . "x"))
+                                             #'ignore)
+                          (quit 'quit))
+                        'quit))
+            (should-not lpy-nrepl--connection)
+            (should-not (process-live-p conn))
+            (should (process-live-p server))
+            (should-not lpy-nrepl--pending-callbacks)
+            (should-not lpy-nrepl--in-flight-evals)
+            (should-not lpy-nrepl--latest-by-op)
+            (should (string-match-p
+                     "send interrupted; the request may be half-sent .* 2 pending"
+                     (with-current-buffer (lpy-nrepl--repl-buffer)
+                       (buffer-string))))))
+      (delete-process conn)
+      (delete-process server))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 
