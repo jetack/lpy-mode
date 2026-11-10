@@ -1888,7 +1888,7 @@ Return the seconds they took."
       ;; Positive control: the request sites exist, spelled via a constant.
       (should (re-search-forward "(op \\. ,lpy-nrepl--op-" nil t))
       (goto-char (point-min))
-      (should-not (re-search-forward "(op \\. \"" nil t)))))
+      (should-not (re-search-forward "(op \\. \"\\|(cons 'op \"" nil t)))))
 
 (ert-deftest lpy-nrepl-test-log-is-capped ()
   ;; Defect: an endless printing loop grows the REPL log without bound
@@ -1911,6 +1911,41 @@ Return the seconds they took."
         (should (<= (buffer-size) (+ 2000 (length "tick 500\n"))))
         ;; Whole lines are dropped: the log starts at a line's start.
         (should (string-prefix-p "tick " (lpy-nrepl-test--log-text)))))))
+
+(defmacro lpy-nrepl-test--with-named-log (&rest body)
+  "Run BODY with a REPL log buffer named like the real one, then kill it.
+No leading space: Emacs disables undo in such buffers by itself, which
+would hide what `lpy-nrepl-repl-mode' does."
+  (declare (indent 0))
+  `(let ((lpy-nrepl--repl-buffer-name "*lpy-nrepl-test-log*"))
+     (unwind-protect (progn ,@body)
+       (when (get-buffer lpy-nrepl--repl-buffer-name)
+         (kill-buffer lpy-nrepl--repl-buffer-name)))))
+
+(ert-deftest lpy-nrepl-test-trimmed-log-keeps-no-undo ()
+  ;; Defect: the lines the cap trims are kept in `buffer-undo-list', so
+  ;; an endless loop's output grows memory there instead (57 MB in 4 s).
+  (lpy-nrepl-test--with-named-log
+    (let ((lpy-nrepl-log-max-size 2000))
+      (dotimes (n 500)
+        (lpy-nrepl--log "stdout-chunk" (format "tick %d\n" n)))
+      (with-current-buffer (lpy-nrepl--repl-buffer)
+        (should (<= (buffer-size) 2000))
+        (should (eq buffer-undo-list t))))))
+
+(ert-deftest lpy-nrepl-test-trim-inside-long-line-keeps-the-margin ()
+  ;; Defect: a cut inside a long line snaps to the next newline wherever it
+  ;; is, here the one before the newest entry, and drops almost the whole
+  ;; log instead of trimming it to 90% of the cap.
+  (lpy-nrepl-test--with-named-log
+    (let ((lpy-nrepl-log-max-size 1000))
+      (lpy-nrepl--log "stdout-chunk" (make-string 990 ?x))
+      (lpy-nrepl--log "error" ";; interrupting eval 1")
+      (lpy-nrepl--log "stdout-chunk" "yy")
+      (with-current-buffer (lpy-nrepl--repl-buffer)
+        (should (<= 850 (buffer-size) 1000))
+        (should (string-suffix-p "\n;; interrupting eval 1\nyy"
+                                 (lpy-nrepl-test--log-text)))))))
 
 (ert-deftest lpy-nrepl-test-connection-death-is-logged-and-cleared ()
   ;; Defect: a server dying mid-eval leaves its callbacks and the eval in

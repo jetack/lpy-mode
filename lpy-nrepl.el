@@ -225,22 +225,24 @@ With FULL, abbreviate the whole path instead of keeping the file name."
     buf))
 
 (defun lpy-nrepl--trim-log ()
-  "Drop whole lines from the top of the current buffer to fit the log cap.
+  "Drop lines from the top of the current buffer to fit the log cap.
 Only once over `lpy-nrepl-log-max-size', and then down to 90% of it, so
 the deletion's cost is spread over many appended chunks.  Window points
 and point are positions the deletion shifts, so they keep their text."
   (when (and lpy-nrepl-log-max-size
              (> (buffer-size) lpy-nrepl-log-max-size))
-    (let ((inhibit-read-only t))
+    (let* ((inhibit-read-only t)
+           (keep (floor (* 0.9 lpy-nrepl-log-max-size)))
+           (cut (max (point-min) (- (point-max) keep)))
+           ;; How far past the cut a line start may move it: unbounded,
+           ;; a cut inside one long line snapped to the newline before
+           ;; the newest entry and dropped almost the whole log.
+           (slack (floor (* 0.1 lpy-nrepl-log-max-size))))
       (save-excursion
-        (goto-char (- (point-max) (floor (* 0.9 lpy-nrepl-log-max-size))))
-        ;; Past the cut to the next line start.  With none after it (the
-        ;; tail is one long line), cut mid-line: the newest text stays.
-        (let ((cut (point)))
-          (unless (bolp)
-            (forward-line 1)
-            (when (eobp)
-              (goto-char cut))))
+        (goto-char cut)
+        (unless (or (bolp)
+                    (search-forward "\n" (min (point-max) (+ cut slack)) t))
+          (goto-char cut))
         (delete-region (point-min) (point))))))
 
 (defun lpy-nrepl--log (direction text)
@@ -421,14 +423,14 @@ tracked in flight until their final reply.  Return the request id."
          (code (alist-get 'code msg)))
     ;; Registered only once serialized: a message that cannot be encoded
     ;; must not leave an eval in flight or a callback waiting forever.
+    ;; The callback and in-flight entry go in before the send, since a
+    ;; reply may be read during it; a failed send takes them out again,
+    ;; and the log and superseding happen only once it succeeded.
     (when eval-p
       (push id lpy-nrepl--in-flight-evals)
       (force-mode-line-update t))
-    (lpy-nrepl--supersede op id)
     (when callback
       (push (cons id callback) lpy-nrepl--pending-callbacks))
-    (when code
-      (lpy-nrepl--log "input" code))
     (condition-case err
         (process-send-string lpy-nrepl--connection (concat json-str "\n"))
       (error
@@ -436,6 +438,9 @@ tracked in flight until their final reply.  Return the request id."
              (assoc-delete-all id lpy-nrepl--pending-callbacks))
        (lpy-nrepl--finish-request id)
        (signal (car err) (cdr err))))
+    (lpy-nrepl--supersede op id)
+    (when code
+      (lpy-nrepl--log "input" code))
     id))
 
 (defun lpy-nrepl--may-wait-p ()
@@ -1973,6 +1978,10 @@ Falls back to `run-lpy' comint shell when not connected."
 Shows input sent to and output received from the nREPL server."
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
+  ;; A log, like *Messages*: with undo on, every line the cap trims
+  ;; (`lpy-nrepl--trim-log') is kept in `buffer-undo-list', so the growth
+  ;; an endless printing loop causes just moves there.
+  (buffer-disable-undo)
   (setq mode-line-process
         '(:eval (concat " ["
                   (replace-regexp-in-string "%" "%%" (lpy-nrepl--scope-label)
