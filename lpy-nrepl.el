@@ -188,6 +188,14 @@ printing loop cannot grow the buffer without bound."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'lpy-nrepl)
 
+(defcustom lpy-nrepl-server-log-max-size 1000000
+  "Most characters the server buffer `*lpy-nrepl-server*' keeps, or nil.
+Output of threads an eval started goes to the server's own stdout and
+stderr, so a chatty one would otherwise grow the buffer without bound.
+Trimmed like `lpy-nrepl-log-max-size'."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'lpy-nrepl)
+
 (defvar lpy-nrepl-start-timeout 10
   "Seconds `lpy-nrepl-start' waits for the server's port line.")
 
@@ -225,20 +233,19 @@ With FULL, abbreviate the whole path instead of keeping the file name."
         (lpy-nrepl-repl-mode)))
     buf))
 
-(defun lpy-nrepl--trim-log ()
-  "Drop text from the top of the current buffer to fit the log cap.
-Only once over `lpy-nrepl-log-max-size', and then down to 90% of it, so
-the deletion's cost is spread over many appended chunks.  Window points
-and point are positions the deletion shifts, so they keep their text."
-  (when (and lpy-nrepl-log-max-size
-             (> (buffer-size) lpy-nrepl-log-max-size))
+(defun lpy-nrepl--trim-buffer (max-size)
+  "Drop text from the top of the current buffer to fit MAX-SIZE characters.
+MAX-SIZE nil means no limit.  Only once over it, and then down to 90% of
+it, so the deletion's cost is spread over many appended chunks.  Window
+points and point are positions the deletion shifts, so they keep their text."
+  (when (and max-size (> (buffer-size) max-size))
     (let* ((inhibit-read-only t)
-           (keep (floor (* 0.9 lpy-nrepl-log-max-size)))
+           (keep (floor (* 0.9 max-size)))
            (cut (max (point-min) (- (point-max) keep)))
            ;; How far past the cut a line start may move it: unbounded,
            ;; a cut inside one long line snapped to the newline before
            ;; the newest entry and dropped almost the whole log.
-           (slack (floor (* 0.1 lpy-nrepl-log-max-size))))
+           (slack (floor (* 0.1 max-size))))
       (save-excursion
         (goto-char cut)
         (unless (or (bolp)
@@ -285,7 +292,7 @@ a chunk need not end a line.  Any other entry starts on a fresh line."
            (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
           (_
            (insert (propertize (concat text "\n") 'read-only t))))
-        (lpy-nrepl--trim-log))
+        (lpy-nrepl--trim-buffer lpy-nrepl-log-max-size))
       (when point-at-end
         (goto-char (point-max)))
       (dolist (win following)
@@ -644,7 +651,10 @@ Only PROC's own output is searched for the port line, accumulated in its
       (let ((inhibit-read-only t))
         (save-excursion
           (goto-char (point-max))
-          (insert output)))))
+          (insert output))
+        ;; Trimmed here, never from `seen' below: the port line is searched
+        ;; in the process property, not in the buffer.
+        (lpy-nrepl--trim-buffer lpy-nrepl-server-log-max-size))))
   (unless (process-get proc 'lpy-nrepl-port)
     (let ((seen (concat (process-get proc 'lpy-nrepl-output) output)))
       (process-put proc 'lpy-nrepl-output seen)
@@ -716,6 +726,8 @@ server process."
   ;; to that dead port.
   (let ((buf (get-buffer-create lpy-nrepl--server-buffer-name)))
     (with-current-buffer buf
+      ;; Undo would keep every line the cap trims (see `lpy-nrepl-repl-mode').
+      (buffer-disable-undo)
       (let ((inhibit-read-only t))
         (erase-buffer)))
     (let ((proc (make-process
@@ -2043,7 +2055,7 @@ Shows input sent to and output received from the nREPL server."
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
   ;; A log, like *Messages*: with undo on, every line the cap trims
-  ;; (`lpy-nrepl--trim-log') is kept in `buffer-undo-list', so the growth
+  ;; (`lpy-nrepl--trim-buffer') is kept in `buffer-undo-list', so the growth
   ;; an endless printing loop causes just moves there.
   (buffer-disable-undo)
   (setq mode-line-process
