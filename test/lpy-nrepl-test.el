@@ -1924,9 +1924,9 @@ Return the seconds they took."
         (progn
           ;; The port line must still be found after the cap trimmed the
           ;; buffer that held its start.
-          (lpy-nrepl--server-filter
-           proc (concat (make-string 3000 ?x) "\nnREPL server started on 127.0.0.1:"))
-          (lpy-nrepl--server-filter proc "4242\n")
+          (lpy-nrepl--server-filter proc "nREPL server started on 127.0.0.1:")
+          ;; This chunk pushes the line's start out of the buffer.
+          (lpy-nrepl--server-filter proc (concat "4242\n" (make-string 3000 ?x) "\n"))
           (should (equal (process-get proc 'lpy-nrepl-port) 4242))
           (dotimes (n 500)
             (lpy-nrepl--server-filter proc (format "tick %d\n" n)))
