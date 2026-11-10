@@ -1912,6 +1912,28 @@ Return the seconds they took."
         ;; The lines are short, so the cut snaps to a line start.
         (should (string-prefix-p "tick " (lpy-nrepl-test--log-text)))))))
 
+(ert-deftest lpy-nrepl-test-server-buffer-is-capped ()
+  ;; Defect: output of a thread an eval started goes to the server's own
+  ;; stdout, so a chatty one grows `*lpy-nrepl-server*' without bound.
+  (let* ((buf (generate-new-buffer " *lpy-nrepl-test-server*"))
+         (proc (make-pipe-process :name "lpy-nrepl-test-srv" :buffer buf
+                                  :noquery t))
+         (lpy-nrepl-server-log-max-size 2000)
+         (lpy-nrepl--server-process nil))
+    (unwind-protect
+        (progn
+          ;; The port line must still be found after the cap trimmed the
+          ;; buffer that held its start.
+          (lpy-nrepl--server-filter proc (concat (make-string 3000 ?x) "\n"))
+          (dotimes (n 500)
+            (lpy-nrepl--server-filter proc (format "tick %d\n" n)))
+          (with-current-buffer buf
+            (should (<= (buffer-size) 2000))
+            (should (string-suffix-p "tick 499\n" (buffer-string)))
+            (should-not (string-match-p "xxxx" (buffer-string)))))
+      (delete-process proc)
+      (kill-buffer buf))))
+
 (defmacro lpy-nrepl-test--with-named-log (&rest body)
   "Run BODY with a REPL log buffer named like the real one, then kill it.
 No leading space: Emacs disables undo in such buffers by itself, which
