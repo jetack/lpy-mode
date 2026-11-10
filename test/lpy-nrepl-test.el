@@ -1725,12 +1725,13 @@ Return the seconds they took."
   (lpy-nrepl-test--with-servers (srv)
     (lpy-nrepl-connect (lpy-nrepl-test--port srv))
     (lpy-nrepl-eval-string "(while True (pass))")
-    (should lpy-nrepl--in-flight-evals)
     (with-temp-buffer
       (insert "hea")
       (let ((elapsed (lpy-nrepl-test--table-calls
                       (nth 2 (lpy-nrepl-completion-at-point)))))
         (should (< elapsed 0.3))
+        ;; The eval was still unanswered throughout.
+        (should lpy-nrepl--in-flight-evals)
         (lpy-nrepl-test--wait #'ignore 0.2)
         (should (<= (length (lpy-nrepl-test--requests srv "complete")) 1))))))
 
@@ -1858,7 +1859,7 @@ Return the seconds they took."
   (lpy-nrepl-test--with-servers (srv)
     (lpy-nrepl-connect (lpy-nrepl-test--port srv))
     (lpy-nrepl-eval-string "(while True (pass))")
-    (should lpy-nrepl--in-flight-evals)
+    (should lpy-nrepl--pending-callbacks)
     (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--client srv))))
     (delete-process (lpy-nrepl-test--client srv))
     (should (lpy-nrepl-test--wait (lambda () (not (lpy-nrepl-connected-p)))))
