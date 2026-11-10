@@ -1909,7 +1909,7 @@ Return the seconds they took."
                (lambda () (string-match-p "tick 500\n" (lpy-nrepl-test--log-text)))))
       (with-current-buffer (lpy-nrepl--repl-buffer)
         (should (<= (buffer-size) (+ 2000 (length "tick 500\n"))))
-        ;; Whole lines are dropped: the log starts at a line's start.
+        ;; The lines are short, so the cut snaps to a line start.
         (should (string-prefix-p "tick " (lpy-nrepl-test--log-text)))))))
 
 (defmacro lpy-nrepl-test--with-named-log (&rest body)
@@ -1922,16 +1922,26 @@ would hide what `lpy-nrepl-repl-mode' does."
        (when (get-buffer lpy-nrepl--repl-buffer-name)
          (kill-buffer lpy-nrepl--repl-buffer-name)))))
 
+(defun lpy-nrepl-test--undo-deleted-chars ()
+  "Return how many characters of deleted text `buffer-undo-list' holds."
+  (if (eq buffer-undo-list t)
+      0
+    (cl-loop for e in buffer-undo-list
+             when (and (consp e) (stringp (car e)))
+             sum (length (car e)))))
+
 (ert-deftest lpy-nrepl-test-trimmed-log-keeps-no-undo ()
   ;; Defect: the lines the cap trims are kept in `buffer-undo-list', so
   ;; an endless loop's output grows memory there instead (57 MB in 4 s).
   (lpy-nrepl-test--with-named-log
     (let ((lpy-nrepl-log-max-size 2000))
-      (dotimes (n 500)
+      (dotimes (n 2000)
         (lpy-nrepl--log "stdout-chunk" (format "tick %d\n" n)))
       (with-current-buffer (lpy-nrepl--repl-buffer)
         (should (<= (buffer-size) 2000))
-        (should (eq buffer-undo-list t))))))
+        ;; Over 17000 characters were trimmed; what undo holds of them
+        ;; must stay bounded by the cap, not grow with the output.
+        (should (< (lpy-nrepl-test--undo-deleted-chars) 2000))))))
 
 (ert-deftest lpy-nrepl-test-trim-inside-long-line-keeps-the-margin ()
   ;; Defect: a cut inside a long line snaps to the next newline wherever it
@@ -1998,6 +2008,88 @@ would hide what `lpy-nrepl-repl-mode' does."
             (should (lpy-nrepl-test--wait #'lpy-nrepl-connected-p))
             (should (equal (process-contact lpy-nrepl--connection :service) port)))
         (delete-directory dir t)))))
+
+;;; Send: superseding and its undo
+
+(defmacro lpy-nrepl-test--with-send-stub (send-fn &rest body)
+  "Run BODY with request state isolated and `process-send-string' as SEND-FN.
+SEND-FN is called with the sent string."
+  (declare (indent 1))
+  `(let ((lpy-nrepl--repl-buffer-name " *lpy-nrepl-test-send*")
+         (lpy-nrepl--connection nil)
+         (lpy-nrepl--pending-callbacks nil)
+         (lpy-nrepl--in-flight-evals nil)
+         (lpy-nrepl--ignored-ids nil)
+         (lpy-nrepl--latest-by-op nil)
+         (lpy-nrepl--request-counter 0))
+     (unwind-protect
+         (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+                   ((symbol-function 'process-send-string)
+                    (lambda (_proc str) (funcall ,send-fn str))))
+           ,@body)
+       (when (get-buffer lpy-nrepl--repl-buffer-name)
+         (kill-buffer lpy-nrepl--repl-buffer-name)))))
+
+(ert-deftest lpy-nrepl-test-request-sent-during-send-stays-latest ()
+  ;; Defect: a blocking send runs timers (corfu's), and a newer complete
+  ;; request sent from one is superseded by the older request once its send
+  ;; returns, so the newer one's reply is dropped.
+  (let ((sends 0) (nested nil))
+    (lpy-nrepl-test--with-send-stub
+        (lambda (_str)
+          (when (= (cl-incf sends) 1)
+            (setq nested (lpy-nrepl--send '((op . "complete")) #'ignore))))
+      (let ((outer (lpy-nrepl--send '((op . "complete")) #'ignore)))
+        (should nested)
+        (should (assoc nested lpy-nrepl--pending-callbacks))
+        (should-not (member nested lpy-nrepl--ignored-ids))
+        (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
+                                  nil nil #'equal)
+                       nested))
+        (should-not (assoc outer lpy-nrepl--pending-callbacks))))))
+
+(ert-deftest lpy-nrepl-test-failed-send-restores-superseded-request ()
+  ;; Defect: a send that fails after superseding leaves the previous request
+  ;; without its callback and the failed one as the op's latest, so the
+  ;; previous request's reply, the only one that can come, is dropped.
+  (let ((fail nil))
+    (lpy-nrepl-test--with-send-stub
+        (lambda (_str) (when fail (error "Broken pipe")))
+      (let* ((a (lpy-nrepl--send '((op . "complete")) #'ignore))
+             (b (progn
+                  (setq fail t)
+                  (should-error (lpy-nrepl--send '((op . "complete")) #'ignore))
+                  (number-to-string lpy-nrepl--request-counter))))
+        (should (assoc a lpy-nrepl--pending-callbacks))
+        (should-not (member a lpy-nrepl--ignored-ids))
+        (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
+                                  nil nil #'equal)
+                       a))
+        (should-not (assoc b lpy-nrepl--pending-callbacks))
+        (should-not (member b lpy-nrepl--in-flight-evals))
+        (should (string-match-p ";; send failed: Broken pipe"
+                                (with-current-buffer (lpy-nrepl--repl-buffer)
+                                  (buffer-string))))))))
+
+(ert-deftest lpy-nrepl-test-failed-send-keeps-newer-nested-request ()
+  ;; Defect: undoing a failed send's supersede after a newer request
+  ;; superseded it meanwhile puts the older request back as the latest.
+  (let ((fail nil) (nested nil))
+    (lpy-nrepl-test--with-send-stub
+        (lambda (_str)
+          (when fail
+            (setq fail nil
+                  nested (lpy-nrepl--send '((op . "complete")) #'ignore))
+            (error "Broken pipe")))
+      (let ((a (lpy-nrepl--send '((op . "complete")) #'ignore)))
+        (setq fail t)
+        (should-error (lpy-nrepl--send '((op . "complete")) #'ignore))
+        (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
+                                  nil nil #'equal)
+                       nested))
+        (should (assoc nested lpy-nrepl--pending-callbacks))
+        (should-not (assoc a lpy-nrepl--pending-callbacks))
+        (should (equal lpy-nrepl--ignored-ids (list a)))))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 
