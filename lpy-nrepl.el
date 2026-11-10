@@ -45,6 +45,11 @@
 
 ;;; Configuration
 
+(defgroup lpy-nrepl nil
+  "nREPL client for LisPython."
+  :group 'languages
+  :prefix "lpy-nrepl-")
+
 (defvar lpy-nrepl--host "127.0.0.1"
   "Host for the nREPL server.")
 
@@ -109,7 +114,13 @@ Unlike `file' it does not rename the eval; the one home of the key.")
 ;; request/reply has one home here: a misspelt boundary string compiles and
 ;; the feature just stops firing.
 
-(defconst lpy-nrepl--eval-ops '("eval" "load-file")
+(defconst lpy-nrepl--op-eval "eval" "Op evaluating a code string.")
+(defconst lpy-nrepl--op-load-file "load-file" "Op loading a file by path.")
+(defconst lpy-nrepl--op-complete "complete" "Op listing completions of a prefix.")
+(defconst lpy-nrepl--op-docs "docs" "Op looking up a symbol's docs.")
+(defconst lpy-nrepl--op-macroexpand "macroexpand" "Op macroexpanding a form.")
+
+(defconst lpy-nrepl--eval-ops (list lpy-nrepl--op-eval lpy-nrepl--op-load-file)
   "Request ops that run user code.
 They are sent with `lpy-nrepl--stream-field' and tracked in
 `lpy-nrepl--in-flight-evals' until their final reply.")
@@ -136,7 +147,10 @@ Every other message with an id is that request's final reply.")
 (defconst lpy-nrepl--unknown-op-error "unknown op"
   "Text of the server's error reply to an op it does not implement.")
 
-(defconst lpy-nrepl--superseding-ops '("complete" "docs")
+(defconst lpy-nrepl--interrupt-result-op "interrupt-result"
+  "Op of the server's reply accepting an interrupt request.")
+
+(defconst lpy-nrepl--superseding-ops (list lpy-nrepl--op-complete lpy-nrepl--op-docs)
   "Request ops whose newer request makes an older unanswered one moot.
 Sending one drops the pending callback of the previous request of its op,
 so a server that answers nothing (busy on an eval) cannot pile them up.")
@@ -159,8 +173,19 @@ the last element is the running one.")
 That proves the server serves other requests while an eval runs, so
 completion may wait for its reply (`lpy-nrepl--may-wait-p').")
 
-(defvar lpy-nrepl-request-timeout 0.5
-  "Seconds a synchronous request (completion) waits for its reply, at most.")
+(defcustom lpy-nrepl-request-timeout 1.0
+  "Seconds a synchronous request (completion) waits for its reply, at most.
+Waited once per completion, and not at all while an eval runs on a server
+that has not shown it answers during one (`lpy-nrepl--may-wait-p')."
+  :type 'number
+  :group 'lpy-nrepl)
+
+(defcustom lpy-nrepl-log-max-size 1000000
+  "Most characters the REPL log `*lpy-nrepl*' keeps, or nil for no limit.
+Once over it, whole lines are dropped from the top down to 90% of it, so
+an endless printing loop cannot grow the buffer without bound."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'lpy-nrepl)
 
 (defvar lpy-nrepl-start-timeout 10
   "Seconds `lpy-nrepl-start' waits for the server's port line.")
@@ -198,6 +223,25 @@ With FULL, abbreviate the whole path instead of keeping the file name."
       (unless (derived-mode-p 'lpy-nrepl-repl-mode)
         (lpy-nrepl-repl-mode)))
     buf))
+
+(defun lpy-nrepl--trim-log ()
+  "Drop whole lines from the top of the current buffer to fit the log cap.
+Only once over `lpy-nrepl-log-max-size', and then down to 90% of it, so
+the deletion's cost is spread over many appended chunks.  Window points
+and point are positions the deletion shifts, so they keep their text."
+  (when (and lpy-nrepl-log-max-size
+             (> (buffer-size) lpy-nrepl-log-max-size))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (- (point-max) (floor (* 0.9 lpy-nrepl-log-max-size))))
+        ;; Past the cut to the next line start.  With none after it (the
+        ;; tail is one long line), cut mid-line: the newest text stays.
+        (let ((cut (point)))
+          (unless (bolp)
+            (forward-line 1)
+            (when (eobp)
+              (goto-char cut))))
+        (delete-region (point-min) (point))))))
 
 (defun lpy-nrepl--log (direction text)
   "Append TEXT to the nREPL REPL buffer in CIDER-like format.
@@ -237,7 +281,8 @@ a chunk need not end a line.  Any other entry starts on a fresh line."
           ("error"
            (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
           (_
-           (insert (propertize (concat text "\n") 'read-only t)))))
+           (insert (propertize (concat text "\n") 'read-only t))))
+        (lpy-nrepl--trim-log))
       (when point-at-end
         (goto-char (point-max)))
       (dolist (win following)
@@ -367,21 +412,30 @@ Eval requests (`lpy-nrepl--eval-ops') ask for streamed output and are
 tracked in flight until their final reply.  Return the request id."
   (unless (lpy-nrepl-connected-p)
     (user-error "Not connected to nREPL server"))
-  (let ((id (lpy-nrepl--next-id))
-        (op (alist-get 'op msg)))
-    (when (member op lpy-nrepl--eval-ops)
-      (setq msg (append msg (list (cons lpy-nrepl--stream-field t))))
+  (let* ((id (lpy-nrepl--next-id))
+         (op (alist-get 'op msg))
+         (eval-p (member op lpy-nrepl--eval-ops))
+         (json-str (json-serialize
+                    `((id . ,id) ,@msg
+                      ,@(and eval-p (list (cons lpy-nrepl--stream-field t))))))
+         (code (alist-get 'code msg)))
+    ;; Registered only once serialized: a message that cannot be encoded
+    ;; must not leave an eval in flight or a callback waiting forever.
+    (when eval-p
       (push id lpy-nrepl--in-flight-evals)
       (force-mode-line-update t))
     (lpy-nrepl--supersede op id)
-    (push (cons 'id id) msg)
     (when callback
       (push (cons id callback) lpy-nrepl--pending-callbacks))
-    (let ((json-str (json-serialize msg))
-          (code (alist-get 'code msg)))
-      (when code
-        (lpy-nrepl--log "input" code))
-      (process-send-string lpy-nrepl--connection (concat json-str "\n")))
+    (when code
+      (lpy-nrepl--log "input" code))
+    (condition-case err
+        (process-send-string lpy-nrepl--connection (concat json-str "\n"))
+      (error
+       (setq lpy-nrepl--pending-callbacks
+             (assoc-delete-all id lpy-nrepl--pending-callbacks))
+       (lpy-nrepl--finish-request id)
+       (signal (car err) (cdr err))))
     id))
 
 (defun lpy-nrepl--may-wait-p ()
@@ -739,7 +793,7 @@ The result goes to the echo area and REPL log, with no overlay."
     (when (string-empty-p trimmed)
       (user-error "Nothing to evaluate"))
     (lpy-nrepl--send
-     `((op . "eval") (code . ,trimmed) ,@(lpy-nrepl--ns-fields))
+     `((op . ,lpy-nrepl--op-eval) (code . ,trimmed) ,@(lpy-nrepl--ns-fields))
      (lambda (response)
        ;; Not tied to a source buffer: keep an earlier eval's overlay target
        ;; (buffer-local) from receiving this result.
@@ -774,7 +828,7 @@ position sent is that of its first character after the trim."
   (setq lpy-nrepl--eval-point (point))
   (let ((leading (- (length code) (length (string-trim-left code)))))
     (lpy-nrepl--send
-     `((op . "eval") (code . ,(string-trim code))
+     `((op . ,lpy-nrepl--op-eval) (code . ,(string-trim code))
        ,@(lpy-nrepl--position-fields (+ start leading)))
      #'lpy-nrepl--display-eval-result)))
 
@@ -815,7 +869,7 @@ Sends a `load-file' operation with the buffer's file path."
   (when (buffer-modified-p)
     (save-buffer))
   (lpy-nrepl--send
-   `((op . "load-file") (path . ,(buffer-file-name)))
+   `((op . ,lpy-nrepl--op-load-file) (path . ,(buffer-file-name)))
    #'lpy-nrepl--display-eval-result))
 
 ;;;###autoload
@@ -832,13 +886,14 @@ Sends the buffer text directly as an eval operation."
   "Report RESPONSE, the server's reply to an interrupt of eval TARGET."
   (let ((err (alist-get 'error response)))
     (cond
+     ((equal (alist-get 'op response) lpy-nrepl--interrupt-result-op)
+      (message "lpy-nrepl: interrupted eval %s" target))
      ((and (stringp err) (string-match-p lpy-nrepl--unknown-op-error err))
       (lpy-nrepl--log "error" ";; this nREPL server cannot interrupt an eval")
       (message "lpy-nrepl: the server is too old to interrupt; upgrade lispython (nREPL streaming and interrupt support) or M-x lpy-nrepl-restart"))
-     (err
-      (message "lpy-nrepl: interrupt of eval %s failed: %s" target err))
      (t
-      (message "lpy-nrepl: interrupted eval %s" target)))))
+      (message "lpy-nrepl: interrupt of eval %s failed: %s"
+               target (or err (json-serialize response)))))))
 
 (defun lpy-nrepl--interrupt-unanswered (request target)
   "Report that interrupt REQUEST of eval TARGET is still unanswered.
@@ -885,7 +940,7 @@ resolved in the buffer file's scope (the session scope without a file)."
   (-when-let (code (or (lpy--current-form-string)
                        (lpy--last-sexp-string)))
     (lpy-nrepl--send
-     `((op . "macroexpand") (code . ,(string-trim code))
+     `((op . ,lpy-nrepl--op-macroexpand) (code . ,(string-trim code))
        ,@(lpy-nrepl--file-fields))
      #'lpy-nrepl--display-macroexpand-result)))
 
@@ -1453,7 +1508,7 @@ the table lists the labels whose filterText does, so `my_v' keeps
               (unless requested
                 (setq requested t)
                 (lpy-nrepl--send
-                 `((op . "complete") (prefix . ,prefix) ,@file-fields)
+                 `((op . ,lpy-nrepl--op-complete) (prefix . ,prefix) ,@file-fields)
                  (lambda (response)
                    (setq items (make-hash-table :test #'equal)
                          labels nil)
@@ -1834,7 +1889,7 @@ looked up in the buffer file's scope (the session scope without a file)."
                         (thing-at-point 'symbol t)))))
       (when (and symbol (> (length symbol) 0))
         (lpy-nrepl--send
-         `((op . "docs") (symbol . ,symbol) ,@(lpy-nrepl--file-fields))
+         `((op . ,lpy-nrepl--op-docs) (symbol . ,symbol) ,@(lpy-nrepl--file-fields))
          (lambda (response)
            (let ((docs (alist-get 'docs response)))
              (when docs

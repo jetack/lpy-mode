@@ -44,7 +44,7 @@ The nREPL server requires `lispython` to be installed:
 pip install lispython
 ```
 
-Output streaming and `C-c C-c` interrupt need lispython with nREPL streaming and interrupt support. With an older server, output appears when the eval ends, and `M-x lpy-nrepl-restart` stops a runaway eval. Completion never waits for a server that is busy evaluating.
+Output streaming and `C-c C-c` interrupt need lispython with nREPL streaming and interrupt support. With an older server, output appears when the eval ends, and `M-x lpy-nrepl-restart` stops a runaway eval. Completion never waits on a server that cannot answer during an eval; otherwise it waits at most `lpy-nrepl-request-timeout` once per completion. The REPL buffer keeps at most `lpy-nrepl-log-max-size` characters (oldest lines dropped first).
 
 ## Requirements
 

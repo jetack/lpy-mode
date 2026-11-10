@@ -1713,8 +1713,9 @@ Return the seconds they took."
     (lpy-nrepl-connect (lpy-nrepl-test--port srv))
     (with-temp-buffer
       (insert "hea")
-      (let ((elapsed (lpy-nrepl-test--table-calls
-                      (nth 2 (lpy-nrepl-completion-at-point)))))
+      (let* ((lpy-nrepl-request-timeout 0.3)
+             (elapsed (lpy-nrepl-test--table-calls
+                       (nth 2 (lpy-nrepl-completion-at-point)))))
         (should (< elapsed 1.5))
         (lpy-nrepl-test--wait #'ignore 0.2)
         (should (= (length (lpy-nrepl-test--requests srv "complete")) 1))))))
@@ -1756,7 +1757,9 @@ Return the seconds they took."
                  (lambda () (lpy-nrepl-test--requests srv "complete"))))
         (funcall answer-next)
         (should (lpy-nrepl-test--wait (lambda () lpy-nrepl--answers-during-eval)))
-        (let ((table (nth 2 (lpy-nrepl-completion-at-point))))
+        ;; A wide bound: the answer comes from a timer, late on a loaded box.
+        (let ((table (nth 2 (lpy-nrepl-completion-at-point)))
+              (lpy-nrepl-request-timeout 2))
           (run-at-time 0.1 nil answer-next)
           (should (equal (all-completions "hea" table) '("heapify"))))))))
 
@@ -1849,9 +1852,65 @@ Return the seconds they took."
       (lpy-nrepl-interrupt t)
       (should (lpy-nrepl-test--wait
                (lambda () (= (length (lpy-nrepl-test--requests srv "interrupt")) 3))))
-      (should (equal (mapcar (lambda (r) (alist-get 'interrupt-id r))
-                             (cdr (lpy-nrepl-test--requests srv "interrupt")))
-                     (list first second))))))
+      (let ((reqs (cdr (lpy-nrepl-test--requests srv "interrupt"))))
+        (should (equal (mapcar (lambda (r) (alist-get 'interrupt-id r)) reqs)
+                       (list first second)))
+        ;; Success is the server's accepting reply, not a missing error.
+        (setq lpy-nrepl-test--messages nil)
+        (lpy-nrepl-test--answer srv `((id . ,(alist-get 'id (car reqs)))
+                                      (op . "pong")))
+        (should (lpy-nrepl-test--wait
+                 (lambda () (string-match-p "failed" (or (car lpy-nrepl-test--messages) "")))))
+        (lpy-nrepl-test--answer srv `((id . ,(alist-get 'id (cadr reqs)))
+                                      (op . "interrupt-result")
+                                      (interrupt-id . ,second)))
+        (should (lpy-nrepl-test--wait
+                 (lambda () (string-match-p "interrupted eval"
+                                            (or (car lpy-nrepl-test--messages) "")))))))))
+
+(ert-deftest lpy-nrepl-test-unencodable-request-leaves-nothing-pending ()
+  ;; Defect: a request registered before it is encoded stays in flight
+  ;; (mode line " eval…" forever) when encoding signals.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (should-error (lpy-nrepl--send `((op . "eval") (code . ,(make-marker)))
+                                   #'ignore))
+    (should-not lpy-nrepl--in-flight-evals)
+    (should-not lpy-nrepl--pending-callbacks)))
+
+(ert-deftest lpy-nrepl-test-op-names-have-one-home ()
+  ;; Policy: every op name lives in its defconst, so a rename is one edit;
+  ;; a request site spelling the op inline drifts silently.
+  (let ((source (locate-library "lpy-nrepl.el" t)))
+    (should source)
+    (with-temp-buffer
+      (insert-file-contents source)
+      ;; Positive control: the request sites exist, spelled via a constant.
+      (should (re-search-forward "(op \\. ,lpy-nrepl--op-" nil t))
+      (goto-char (point-min))
+      (should-not (re-search-forward "(op \\. \"" nil t)))))
+
+(ert-deftest lpy-nrepl-test-log-is-capped ()
+  ;; Defect: an endless printing loop grows the REPL log without bound
+  ;; (tens of MB in seconds) on a machine shared with other sessions.
+  (lpy-nrepl-test--with-servers (srv)
+    (lpy-nrepl-connect (lpy-nrepl-test--port srv))
+    (let* ((lpy-nrepl-log-max-size 2000)
+           (id (lpy-nrepl--send '((op . "eval") (code . "(loop)")) #'ignore)))
+      (should (lpy-nrepl-test--wait (lambda () (lpy-nrepl-test--requests srv))))
+      (process-send-string
+       (lpy-nrepl-test--client srv)
+       (mapconcat (lambda (n)
+                    (concat (json-serialize `((id . ,id) (op . "out")
+                                              (stdout . ,(format "tick %d\n" n))))
+                            "\n"))
+                  (number-sequence 1 500) ""))
+      (should (lpy-nrepl-test--wait
+               (lambda () (string-match-p "tick 500\n" (lpy-nrepl-test--log-text)))))
+      (with-current-buffer (lpy-nrepl--repl-buffer)
+        (should (<= (buffer-size) (+ 2000 (length "tick 500\n"))))
+        ;; Whole lines are dropped: the log starts at a line's start.
+        (should (string-prefix-p "tick " (lpy-nrepl-test--log-text)))))))
 
 (ert-deftest lpy-nrepl-test-connection-death-is-logged-and-cleared ()
   ;; Defect: a server dying mid-eval leaves its callbacks and the eval in
