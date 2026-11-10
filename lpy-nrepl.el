@@ -323,6 +323,10 @@ reports its own deletion, which must not drop its successor."
     (lpy-nrepl--connection-lost
      (format "nREPL connection lost (%s)" (string-trim event))))))
 
+(defconst lpy-nrepl--restart-hint
+  "C-c C-z or M-x lpy-nrepl-restart to start a new one"
+  "Log hint for a loss no live server of ours can be reconnected to.")
+
 (defun lpy-nrepl--connection-lost (what &optional port)
   "Drop the current connection, and log WHAT.
 WHAT describes the loss (the server went away, or a send failed or
@@ -331,8 +335,10 @@ dropped (the Emacs-owned server's death must not drop a connection to
 another server); WHAT is logged either way.  Pending callbacks and
 in-flight evals are cleared with the connection, and the log line says
 how many requests will never be answered.  The log hint depends on whether
-our own server still runs: if so, \\[lpy-nrepl-connect] reconnects to it;
-otherwise a new one must be started."
+the lost connection goes to our own live server: if so,
+\\[lpy-nrepl-switch-to-repl] reconnects to it; otherwise a new server
+must be started.  A server's death (PORT given) always gets the restart
+hint, even when the connection was already dropped."
   (let* ((conn lpy-nrepl--connection)
          (ours (and conn
                     (or (null port)
@@ -343,10 +349,17 @@ otherwise a new one must be started."
      (if ours
          (format ";; %s — %d pending request(s) dropped; %s"
                  what pending
-                 (if (process-live-p lpy-nrepl--server-process)
+                 (if (and (process-live-p lpy-nrepl--server-process)
+                          (equal (process-contact conn :service)
+                                 (process-get lpy-nrepl--server-process
+                                              'lpy-nrepl-port)))
                      "C-c C-z to reconnect"
-                   "C-c C-z or M-x lpy-nrepl-restart to start a new one"))
-       (format ";; %s" what)))
+                   lpy-nrepl--restart-hint))
+       ;; The connection's sentinel can run before the server's, leaving no
+       ;; connection of ours here; the server's death still needs the hint.
+       (if port
+           (format ";; %s; %s" what lpy-nrepl--restart-hint)
+         (format ";; %s" what))))
     (when ours
       ;; Swap rather than just clearing the variable: a remote-closed process
       ;; stays in `process-list' until deleted, and its callbacks never fire.

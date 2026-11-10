@@ -2161,11 +2161,47 @@ SEND-FN is called with the sent string."
             (should-not lpy-nrepl--in-flight-evals)
             (should-not lpy-nrepl--latest-by-op)
             (should (string-match-p
-                     "2 pending"
+                     "\\b2 pending"
                      (with-current-buffer (lpy-nrepl--repl-buffer)
                        (buffer-string))))))
       (delete-process conn)
       (delete-process server))))
+
+;;; Connection-lost hint
+
+(defun lpy-nrepl-test--lost-log (server-live server-port conn-port port)
+  "Return the log after a loss, with a live SERVER-LIVE server on SERVER-PORT.
+The connection goes to CONN-PORT; PORT is passed as the loss's port."
+  (let ((conn (make-pipe-process :name "lpy-nrepl-test-conn" :noquery t))
+        (server (make-pipe-process :name "lpy-nrepl-test-srv" :noquery t)))
+    (unwind-protect
+        (lpy-nrepl-test--with-send-stub #'ignore
+          (let ((lpy-nrepl--server-process (and server-live server)))
+            (process-put server 'lpy-nrepl-port server-port)
+            (setq lpy-nrepl--connection conn)
+            (cl-letf (((symbol-function 'process-contact)
+                       (lambda (_p &rest _) conn-port)))
+              (lpy-nrepl--connection-lost "lost" port))
+            (lpy-nrepl-test--log-text)))
+      (delete-process conn)
+      (delete-process server))))
+
+(ert-deftest lpy-nrepl-test-connection-lost-hint-matches-our-server ()
+  ;; Defect: the hint offered a reconnect even when the connection went to
+  ;; another server, or nothing of ours was alive to reconnect to, and
+  ;; offered nothing when the server's death found the connection gone.
+  (should (string-match-p "to reconnect"
+                          (lpy-nrepl-test--lost-log t 5000 5000 nil)))
+  (should (string-match-p "start a new one"
+                          (lpy-nrepl-test--lost-log nil 5000 5000 nil)))
+  (should (string-match-p "start a new one"
+                          (lpy-nrepl-test--lost-log t 5000 6000 nil)))
+  ;; Server death with the connection already dropped.
+  (let ((log (lpy-nrepl-test--with-send-stub #'ignore
+               (let ((lpy-nrepl--server-process nil))
+                 (lpy-nrepl--connection-lost "died" 5000)
+                 (lpy-nrepl-test--log-text)))))
+    (should (string-match-p "start a new one" log))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 
