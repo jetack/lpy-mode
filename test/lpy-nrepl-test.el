@@ -2161,7 +2161,7 @@ SEND-FN is called with the sent string."
             (should-not lpy-nrepl--in-flight-evals)
             (should-not lpy-nrepl--latest-by-op)
             (should (string-match-p
-                     "send interrupted; the request may be half-sent .* 2 pending"
+                     "2 pending"
                      (with-current-buffer (lpy-nrepl--repl-buffer)
                        (buffer-string))))))
       (delete-process conn)

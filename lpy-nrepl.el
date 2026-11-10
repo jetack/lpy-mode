@@ -324,12 +324,15 @@ reports its own deletion, which must not drop its successor."
      (format "nREPL connection lost (%s)" (string-trim event))))))
 
 (defun lpy-nrepl--connection-lost (what &optional port)
-  "Drop the current connection after its server went away, and log WHAT.
-WHAT describes the loss.  With PORT, only a connection to that port is
+  "Drop the current connection, and log WHAT.
+WHAT describes the loss (the server went away, or a send failed or
+was quit).  With PORT, only a connection to that port is
 dropped (the Emacs-owned server's death must not drop a connection to
 another server); WHAT is logged either way.  Pending callbacks and
 in-flight evals are cleared with the connection, and the log line says
-how many requests will never be answered."
+how many requests will never be answered.  The log hint depends on whether
+our own server still runs: if so, \\[lpy-nrepl-connect] reconnects to it;
+otherwise a new one must be started."
   (let* ((conn lpy-nrepl--connection)
          (ours (and conn
                     (or (null port)
@@ -338,8 +341,11 @@ how many requests will never be answered."
     (lpy-nrepl--log
      "error"
      (if ours
-         (format ";; %s — %d pending request(s) dropped; C-c C-z or M-x lpy-nrepl-restart to start a new one"
-                 what pending)
+         (format ";; %s — %d pending request(s) dropped; %s"
+                 what pending
+                 (if (process-live-p lpy-nrepl--server-process)
+                     "C-c C-z to reconnect"
+                   "C-c C-z or M-x lpy-nrepl-restart to start a new one"))
        (format ";; %s" what)))
     (when ours
       ;; Swap rather than just clearing the variable: a remote-closed process
@@ -478,8 +484,11 @@ tracked in flight until their final reply.  Return the request id."
       ;; queued, which the next send writes: the request may still run, and
       ;; the stream may hold half a line, so the connection is dropped.
       (quit
-       (lpy-nrepl--connection-lost
-        "send interrupted; the request may be half-sent")
+       ;; A second C-g during the log or delete must not leave a
+       ;; half-dropped connection current.
+       (let ((inhibit-quit t))
+         (lpy-nrepl--connection-lost
+          "send interrupted; the request may be half-sent"))
        (signal (car err) (cdr err))))
     id))
 
