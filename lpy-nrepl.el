@@ -308,6 +308,16 @@ a chunk need not end a line.  Any other entry starts on a fresh line."
           (error
            (message "lpy-nrepl: failed to parse response: %s" (error-message-string err))))))))
 
+(defconst lpy-nrepl--reconnect-hint
+  "C-c C-z to connect to our server, or start one"
+  "Log hint for a lost connection, true whether or not our server runs.
+\\[lpy-nrepl-switch-to-repl] connects to a live server of ours, and
+otherwise offers to start one.")
+
+(defconst lpy-nrepl--restart-hint
+  "C-c C-z or M-x lpy-nrepl-restart to start a new one"
+  "Log hint for the death of our own server.")
+
 (defun lpy-nrepl--process-sentinel (proc event)
   "Handle connection state changes of PROC.
 Only the current connection may clear state: a replaced process still
@@ -321,26 +331,36 @@ reports its own deletion, which must not drop its successor."
       (message "lpy-nrepl: connected")))
    ((eq proc lpy-nrepl--connection)
     (lpy-nrepl--connection-lost
-     (format "nREPL connection lost (%s)" (string-trim event))))))
+     (format "nREPL connection lost (%s)" (string-trim event))
+     nil lpy-nrepl--reconnect-hint))))
 
-(defun lpy-nrepl--connection-lost (what &optional port)
-  "Drop the current connection after its server went away, and log WHAT.
-WHAT describes the loss.  With PORT, only a connection to that port is
+(defun lpy-nrepl--connection-lost (what &optional port hint)
+  "Drop the current connection, and log WHAT.
+WHAT describes the loss (the server went away, or a send failed or
+was quit).  With PORT, only a connection to that port is
 dropped (the Emacs-owned server's death must not drop a connection to
 another server); WHAT is logged either way.  Pending callbacks and
 in-flight evals are cleared with the connection, and the log line says
-how many requests will never be answered."
+how many requests will never be answered.  HINT, from the caller (who
+knows what is still running), ends the line when the current connection
+was dropped or, with PORT, there was none; a current connection to another
+server gets no hint."
   (let* ((conn lpy-nrepl--connection)
          (ours (and conn
                     (or (null port)
                         (equal (process-contact conn :service) port))))
-         (pending (if ours (length lpy-nrepl--pending-callbacks) 0)))
+         (pending (if ours (length lpy-nrepl--pending-callbacks) 0))
+         ;; The connection's sentinel can run before the server's, leaving no
+         ;; connection when the server-died line is logged; it still needs
+         ;; its hint.
+         (hint (and hint (or ours (and port (null conn)))
+                    (concat "; " hint))))
     (lpy-nrepl--log
      "error"
      (if ours
-         (format ";; %s — %d pending request(s) dropped; C-c C-z or M-x lpy-nrepl-restart to start a new one"
-                 what pending)
-       (format ";; %s" what)))
+         (format ";; %s — %d pending request(s) dropped%s" what pending
+                 (or hint ""))
+       (format ";; %s%s" what (or hint ""))))
     (when ours
       ;; Swap rather than just clearing the variable: a remote-closed process
       ;; stays in `process-list' until deleted, and its callbacks never fire.
@@ -478,8 +498,12 @@ tracked in flight until their final reply.  Return the request id."
       ;; queued, which the next send writes: the request may still run, and
       ;; the stream may hold half a line, so the connection is dropped.
       (quit
-       (lpy-nrepl--connection-lost
-        "send interrupted; the request may be half-sent")
+       ;; A second C-g during the log or delete must not leave a
+       ;; half-dropped connection current.
+       (let ((inhibit-quit t))
+         (lpy-nrepl--connection-lost
+          "send interrupted; the request may be half-sent"
+          nil lpy-nrepl--reconnect-hint))
        (signal (car err) (cdr err))))
     id))
 
@@ -671,7 +695,7 @@ replaced one still reports its own exit."
             (what (string-trim event)))
         (if port
             (lpy-nrepl--connection-lost (format "nREPL server died (%s)" what)
-                                        port)
+                                        port lpy-nrepl--restart-hint)
           (message "lpy-nrepl: nREPL server exited before it started (%s); see %s"
                    what lpy-nrepl--server-buffer-name))))))
 

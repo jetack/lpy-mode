@@ -2160,12 +2160,57 @@ SEND-FN is called with the sent string."
             (should-not lpy-nrepl--pending-callbacks)
             (should-not lpy-nrepl--in-flight-evals)
             (should-not lpy-nrepl--latest-by-op)
-            (should (string-match-p
-                     "send interrupted; the request may be half-sent .* 2 pending"
-                     (with-current-buffer (lpy-nrepl--repl-buffer)
-                       (buffer-string))))))
+            (let ((log (lpy-nrepl-test--log-text)))
+              (should (string-match-p "send interrupted" log))
+              (should (string-match-p "\\b2 pending" log)))))
       (delete-process conn)
       (delete-process server))))
+
+;;; Connection-lost hint
+
+(defmacro lpy-nrepl-test--with-lost-state (conn-port server-port &rest body)
+  "Run BODY with a connection to CONN-PORT and a dead server on SERVER-PORT.
+CONN-PORT nil means no connection.  `conn' and `server' are bound to the
+fake processes; the server is current but already dead, as in its sentinel."
+  (declare (indent 2))
+  `(let ((conn (make-pipe-process :name "lpy-nrepl-test-conn" :noquery t))
+         (server (make-pipe-process :name "lpy-nrepl-test-srv" :noquery t)))
+     (unwind-protect
+         (lpy-nrepl-test--with-send-stub #'ignore
+           (process-put server 'lpy-nrepl-port ,server-port)
+           (delete-process server)
+           (let ((lpy-nrepl--server-process server))
+             (setq lpy-nrepl--connection (and ,conn-port conn))
+             (cl-letf (((symbol-function 'process-contact)
+                        (lambda (_p &rest _) ,conn-port)))
+               ,@body)
+             (lpy-nrepl-test--log-text)))
+       (delete-process conn)
+       (delete-process server))))
+
+(ert-deftest lpy-nrepl-test-server-death-log-says-restart ()
+  ;; Defect: the server's death logged no hint when its connection's
+  ;; sentinel had already dropped the connection, and a hint for a server
+  ;; that was not ours to restart when a healthy foreign connection stood.
+  (let ((log (lpy-nrepl-test--with-lost-state 5000 5000
+               (lpy-nrepl--server-sentinel server "killed"))))
+    (should (string-match-p "start a new one" log)))
+  (let ((log (lpy-nrepl-test--with-lost-state nil 5000
+               (lpy-nrepl--server-sentinel server "killed"))))
+    (should (string-match-p "start a new one" log)))
+  (let ((log (lpy-nrepl-test--with-lost-state 6000 5000
+               (lpy-nrepl--server-sentinel server "killed"))))
+    (should (string-match-p "server died" log))
+    (should-not (string-match-p "start a new one" log))))
+
+(ert-deftest lpy-nrepl-test-connection-sentinel-log-gives-no-restart-hint ()
+  ;; Defect: the connection's sentinel can run while our server is alive or
+  ;; dying; its single line must not promise a reconnect or demand a restart.
+  (let ((log (lpy-nrepl-test--with-lost-state 5000 5000
+               (delete-process conn)
+               (lpy-nrepl--process-sentinel conn "connection broken\n"))))
+    (should (string-match-p "connection lost" log))
+    (should-not (string-match-p "start a new one" log))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 
