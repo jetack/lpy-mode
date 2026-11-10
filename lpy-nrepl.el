@@ -182,8 +182,9 @@ that has not shown it answers during one (`lpy-nrepl--may-wait-p')."
 
 (defcustom lpy-nrepl-log-max-size 1000000
   "Most characters the REPL log `*lpy-nrepl*' keeps, or nil for no limit.
-Once over it, whole lines are dropped from the top down to 90% of it, so
-an endless printing loop cannot grow the buffer without bound."
+Once over it, the top is cut down to 90% of it, at the next line start
+when one lies within 10% of it and mid-line otherwise, so an endless
+printing loop cannot grow the buffer without bound."
   :type '(choice (const :tag "Unlimited" nil) integer)
   :group 'lpy-nrepl)
 
@@ -225,7 +226,7 @@ With FULL, abbreviate the whole path instead of keeping the file name."
     buf))
 
 (defun lpy-nrepl--trim-log ()
-  "Drop lines from the top of the current buffer to fit the log cap.
+  "Drop text from the top of the current buffer to fit the log cap.
 Only once over `lpy-nrepl-log-max-size', and then down to 90% of it, so
 the deletion's cost is spread over many appended chunks.  Window points
 and point are positions the deletion shifts, so they keep their text."
@@ -394,7 +395,8 @@ final reply and is passed to its callback, which is then forgotten."
 
 (defun lpy-nrepl--supersede (op id)
   "Record ID as the newest request of OP, dropping the previous one's callback.
-Only `lpy-nrepl--superseding-ops' are affected."
+Only `lpy-nrepl--superseding-ops' are affected.  Return what
+`lpy-nrepl--unsupersede' needs to undo this, or nil if nothing changed."
   (when (member op lpy-nrepl--superseding-ops)
     (let* ((cell (assoc op lpy-nrepl--latest-by-op))
            (old (cdr cell))
@@ -405,7 +407,30 @@ Only `lpy-nrepl--superseding-ops' are affected."
         (push old lpy-nrepl--ignored-ids))
       (if cell
           (setcdr cell id)
-        (push (cons op id) lpy-nrepl--latest-by-op)))))
+        (push (cons op id) lpy-nrepl--latest-by-op))
+      (list op id old entry))))
+
+(defun lpy-nrepl--unsupersede (undo)
+  "Undo the `lpy-nrepl--supersede' that returned UNDO, for an unsent request.
+Only while the request is still OP's newest: if a newer one superseded
+it meanwhile, the previous request stays superseded by that one."
+  (pcase-let ((`(,op ,id ,old ,entry) undo))
+    ;; A newer request may have superseded this unsent one: its id would
+    ;; otherwise wait in the ignored list for a reply that never comes.
+    (setq lpy-nrepl--ignored-ids (delete id lpy-nrepl--ignored-ids))
+    (let ((cell (assoc op lpy-nrepl--latest-by-op)))
+      (when (and cell (equal (cdr cell) id))
+        ;; OLD is the newest request of OP sent, answered or not; one
+        ;; already answered has no callback for a later supersede to drop.
+        (if old
+            (setcdr cell old)
+          (setq lpy-nrepl--latest-by-op (delq cell lpy-nrepl--latest-by-op)))
+        ;; OLD's callback comes back only while OLD is still ignored: its
+        ;; final reply may have been read, and dropped, during the send,
+        ;; and a restored callback would then wait for a reply that is gone.
+        (when (and entry (member old lpy-nrepl--ignored-ids))
+          (push entry lpy-nrepl--pending-callbacks)
+          (setq lpy-nrepl--ignored-ids (delete old lpy-nrepl--ignored-ids)))))))
 
 (defun lpy-nrepl--send (msg &optional callback)
   "Send MSG (an alist) as newline-delimited JSON to the nREPL server.
@@ -420,27 +445,42 @@ tracked in flight until their final reply.  Return the request id."
          (json-str (json-serialize
                     `((id . ,id) ,@msg
                       ,@(and eval-p (list (cons lpy-nrepl--stream-field t))))))
-         (code (alist-get 'code msg)))
-    ;; Registered only once serialized: a message that cannot be encoded
-    ;; must not leave an eval in flight or a callback waiting forever.
-    ;; The callback and in-flight entry go in before the send, since a
-    ;; reply may be read during it; a failed send takes them out again,
-    ;; and the log and superseding happen only once it succeeded.
+         (code (alist-get 'code msg))
+         undo)
+    ;; Registered only once serialized and logged: a message that cannot
+    ;; be encoded or logged must not leave an eval in flight, a callback
+    ;; waiting forever or its op superseded.  The input log, registration
+    ;; and superseding all happen before the send, because a blocking send
+    ;; runs timers and process filters: a nested newer request must find
+    ;; this one already superseded (not be superseded by it afterwards),
+    ;; and a reply read meanwhile must be logged after its input.  A send
+    ;; that fails undoes the registration, logs it and re-signals.
+    (when code
+      (lpy-nrepl--log "input" code))
     (when eval-p
       (push id lpy-nrepl--in-flight-evals)
       (force-mode-line-update t))
     (when callback
       (push (cons id callback) lpy-nrepl--pending-callbacks))
+    (setq undo (lpy-nrepl--supersede op id))
     (condition-case err
         (process-send-string lpy-nrepl--connection (concat json-str "\n"))
       (error
        (setq lpy-nrepl--pending-callbacks
              (assoc-delete-all id lpy-nrepl--pending-callbacks))
        (lpy-nrepl--finish-request id)
+       (when undo
+         (lpy-nrepl--unsupersede undo))
+       (lpy-nrepl--log "error"
+                       (format ";; send failed: %s" (error-message-string err)))
+       (signal (car err) (cdr err)))
+      ;; A quit lands while Emacs waits with the unwritten rest of the line
+      ;; queued, which the next send writes: the request may still run, and
+      ;; the stream may hold half a line, so the connection is dropped.
+      (quit
+       (lpy-nrepl--connection-lost
+        "send interrupted; the request may be half-sent")
        (signal (car err) (cdr err))))
-    (lpy-nrepl--supersede op id)
-    (when code
-      (lpy-nrepl--log "input" code))
     id))
 
 (defun lpy-nrepl--may-wait-p ()
