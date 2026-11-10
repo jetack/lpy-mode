@@ -2091,6 +2091,75 @@ SEND-FN is called with the sent string."
         (should-not (assoc a lpy-nrepl--pending-callbacks))
         (should (equal lpy-nrepl--ignored-ids (list a)))))))
 
+(ert-deftest lpy-nrepl-test-failed-send-keeps-answered-request-done ()
+  ;; Defect: the superseded request's final reply is read, and dropped,
+  ;; during the failing send, and undoing the supersede then restores its
+  ;; callback, which waits forever for a reply that is gone.
+  (let ((fail nil) (fired nil))
+    (lpy-nrepl-test--with-send-stub
+        (lambda (_str)
+          (when fail
+            (setq fail nil)
+            (lpy-nrepl--handle-response '((id . "1") (items . [])))
+            (error "Broken pipe")))
+      (let ((a (lpy-nrepl--send '((op . "complete"))
+                                (lambda (_) (push 'a fired)))))
+        (setq fail t)
+        (should-error (lpy-nrepl--send '((op . "complete")) #'ignore))
+        (should-not (assoc a lpy-nrepl--pending-callbacks))
+        (let ((c (lpy-nrepl--send '((op . "complete"))
+                                  (lambda (_) (push 'c fired)))))
+          (lpy-nrepl--handle-response `((id . ,c) (items . [])))
+          (should (equal fired '(c)))
+          (should-not lpy-nrepl--pending-callbacks)
+          (should-not lpy-nrepl--ignored-ids))))))
+
+(ert-deftest lpy-nrepl-test-unloggable-request-is-not-registered ()
+  ;; Defect: an input log that signals leaves the never-sent request
+  ;; registered: its callback waits forever, its eval stays in flight, and
+  ;; it supersedes the previous request of its op.
+  (lpy-nrepl-test--with-send-stub #'ignore
+    (let ((a (lpy-nrepl--send '((op . "complete")) #'ignore)))
+      (cl-letf (((symbol-function 'lpy-nrepl--log)
+                 (lambda (direction _text)
+                   (when (equal direction "input") (error "Log broken")))))
+        (should-error (lpy-nrepl--send '((op . "complete") (code . "x"))
+                                       #'ignore))
+        (should-error (lpy-nrepl--send '((op . "eval") (code . "x"))
+                                       #'ignore)))
+      (should (equal (mapcar #'car lpy-nrepl--pending-callbacks) (list a)))
+      (should-not lpy-nrepl--in-flight-evals)
+      (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
+                                nil nil #'equal)
+                     a)))))
+
+(ert-deftest lpy-nrepl-test-quit-send-is-undone ()
+  ;; Defect: C-g during a blocking send skips the cleanup, so the unsent
+  ;; request keeps its callback and superseding, and its eval stays in
+  ;; flight.
+  (let ((quit-p nil))
+    (lpy-nrepl-test--with-send-stub
+        (lambda (_str) (when quit-p (signal 'quit nil)))
+      (let ((a (lpy-nrepl--send '((op . "complete")) #'ignore)))
+        (setq quit-p t)
+        (should (eq (condition-case nil
+                        (lpy-nrepl--send '((op . "complete")) #'ignore)
+                      (quit 'quit))
+                    'quit))
+        (should (eq (condition-case nil
+                        (lpy-nrepl--send '((op . "eval") (code . "x")) #'ignore)
+                      (quit 'quit))
+                    'quit))
+        (should (equal (mapcar #'car lpy-nrepl--pending-callbacks) (list a)))
+        (should-not lpy-nrepl--ignored-ids)
+        (should-not lpy-nrepl--in-flight-evals)
+        (should (equal (alist-get "complete" lpy-nrepl--latest-by-op
+                                  nil nil #'equal)
+                       a))
+        (should (string-match-p ";; send interrupted"
+                                (with-current-buffer (lpy-nrepl--repl-buffer)
+                                  (buffer-string))))))))
+
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 
 (defun lpy-nrepl-test--live-lpy ()

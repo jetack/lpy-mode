@@ -420,10 +420,15 @@ it meanwhile, the previous request stays superseded by that one."
     (setq lpy-nrepl--ignored-ids (delete id lpy-nrepl--ignored-ids))
     (let ((cell (assoc op lpy-nrepl--latest-by-op)))
       (when (and cell (equal (cdr cell) id))
+        ;; OLD is the newest request of OP sent, answered or not; one
+        ;; already answered has no callback for a later supersede to drop.
         (if old
             (setcdr cell old)
           (setq lpy-nrepl--latest-by-op (delq cell lpy-nrepl--latest-by-op)))
-        (when entry
+        ;; OLD's callback comes back only while OLD is still ignored: its
+        ;; final reply may have been read, and dropped, during the send,
+        ;; and a restored callback would then wait for a reply that is gone.
+        (when (and entry (member old lpy-nrepl--ignored-ids))
           (push entry lpy-nrepl--pending-callbacks)
           (setq lpy-nrepl--ignored-ids (delete old lpy-nrepl--ignored-ids)))))))
 
@@ -442,31 +447,36 @@ tracked in flight until their final reply.  Return the request id."
                       ,@(and eval-p (list (cons lpy-nrepl--stream-field t))))))
          (code (alist-get 'code msg))
          undo)
-    ;; Registered only once serialized: a message that cannot be encoded
-    ;; must not leave an eval in flight or a callback waiting forever.
-    ;; Everything else happens before the send, because a blocking send
+    ;; Registered only once serialized and logged: a message that cannot
+    ;; be encoded or logged must not leave an eval in flight, a callback
+    ;; waiting forever or its op superseded.  The input log, registration
+    ;; and superseding all happen before the send, because a blocking send
     ;; runs timers and process filters: a nested newer request must find
     ;; this one already superseded (not be superseded by it afterwards),
-    ;; and a reply read meanwhile must be logged after its input.  A
-    ;; failed send undoes the registration and logs the failure.
+    ;; and a reply read meanwhile must be logged after its input.  A send
+    ;; that fails or is quit undoes the registration, logs it and
+    ;; re-signals.
+    (when code
+      (lpy-nrepl--log "input" code))
     (when eval-p
       (push id lpy-nrepl--in-flight-evals)
       (force-mode-line-update t))
     (when callback
       (push (cons id callback) lpy-nrepl--pending-callbacks))
     (setq undo (lpy-nrepl--supersede op id))
-    (when code
-      (lpy-nrepl--log "input" code))
     (condition-case err
         (process-send-string lpy-nrepl--connection (concat json-str "\n"))
-      (error
+      ((error quit)
        (setq lpy-nrepl--pending-callbacks
              (assoc-delete-all id lpy-nrepl--pending-callbacks))
        (lpy-nrepl--finish-request id)
        (when undo
          (lpy-nrepl--unsupersede undo))
        (lpy-nrepl--log "error"
-                       (format ";; send failed: %s" (error-message-string err)))
+                       (if (eq (car err) 'quit)
+                           ";; send interrupted"
+                         (format ";; send failed: %s"
+                                 (error-message-string err))))
        (signal (car err) (cdr err))))
     id))
 
