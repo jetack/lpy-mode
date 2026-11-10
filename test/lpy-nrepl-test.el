@@ -2201,7 +2201,10 @@ The connection goes to CONN-PORT; PORT is passed as the loss's port."
                (let ((lpy-nrepl--server-process nil))
                  (lpy-nrepl--connection-lost "died" 5000)
                  (lpy-nrepl-test--log-text)))))
-    (should (string-match-p "start a new one" log))))
+    (should (string-match-p "start a new one" log)))
+  ;; Server death while connected to another, healthy server: no hint.
+  (should-not (string-match-p "start a new one"
+                              (lpy-nrepl-test--lost-log t 5000 6000 5000))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
 

@@ -337,8 +337,8 @@ in-flight evals are cleared with the connection, and the log line says
 how many requests will never be answered.  The log hint depends on whether
 the lost connection goes to our own live server: if so,
 \\[lpy-nrepl-switch-to-repl] reconnects to it; otherwise a new server
-must be started.  A server's death (PORT given) always gets the restart
-hint, even when the connection was already dropped."
+must be started.  A server's death (PORT given) with no connection left
+also gets the restart hint; a live connection to another server does not."
   (let* ((conn lpy-nrepl--connection)
          (ours (and conn
                     (or (null port)
@@ -357,7 +357,7 @@ hint, even when the connection was already dropped."
                    lpy-nrepl--restart-hint))
        ;; The connection's sentinel can run before the server's, leaving no
        ;; connection of ours here; the server's death still needs the hint.
-       (if port
+       (if (and port (null conn))
            (format ";; %s; %s" what lpy-nrepl--restart-hint)
          (format ";; %s" what))))
     (when ours
