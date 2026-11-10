@@ -203,8 +203,10 @@ Trimmed like `lpy-nrepl-log-max-size'."
   "Seconds after which an unanswered interrupt is reported.")
 
 (defconst lpy-nrepl--server-started-regexp
-  "nREPL server started on [^:\n]+:\\([0-9]+\\)"
-  "Regexp matching the server's startup line; group 1 is the port.")
+  "nREPL server started on [^:\n]+:\\([0-9]+\\)\r?\n"
+  "Regexp matching the server's startup line; group 1 is the port.
+The line must be complete: a port line split across output chunks would
+otherwise record the digits seen so far.")
 
 ;;; Helpers
 
@@ -316,10 +318,11 @@ a chunk need not end a line.  Any other entry starts on a fresh line."
            (message "lpy-nrepl: failed to parse response: %s" (error-message-string err))))))))
 
 (defconst lpy-nrepl--reconnect-hint
-  "C-c C-z to connect to our server, or start one"
+  "C-c C-z to connect to our server once it is up, or start one"
   "Log hint for a lost connection, true whether or not our server runs.
-\\[lpy-nrepl-switch-to-repl] connects to a live server of ours, and
-otherwise offers to start one.")
+\\[lpy-nrepl-switch-to-repl] connects to a live server of ours once it
+has reported its port (until then it says the server is still starting),
+and offers to start one when none runs.")
 
 (defconst lpy-nrepl--restart-hint
   "C-c C-z or M-x lpy-nrepl-restart to start a new one"
@@ -2046,6 +2049,7 @@ Falls back to `run-lpy' comint shell when not connected."
     (define-key map (kbd "C-c M-n") #'lpy-nrepl-set-file-scope)
     (define-key map (kbd "C-c M-:") #'lpy-nrepl-eval-string)
     (define-key map (kbd "C-c C-c") #'lpy-nrepl-interrupt)
+    (define-key map (kbd "C-c C-z") #'lpy-nrepl-switch-to-repl)
     map)
   "Keymap for `lpy-nrepl-repl-mode'.")
 

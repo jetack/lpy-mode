@@ -1937,6 +1937,26 @@ Return the seconds they took."
       (delete-process proc)
       (kill-buffer buf))))
 
+(ert-deftest lpy-nrepl-test-server-port-line-split-across-chunks ()
+  ;; Defect: a port line split mid-digits (":42" then "42\n") recorded 42.
+  (let* ((buf (generate-new-buffer " *lpy-nrepl-test-server*"))
+         (proc (make-pipe-process :name "lpy-nrepl-test-srv" :buffer buf
+                                  :noquery t))
+         (lpy-nrepl--server-process nil))
+    (unwind-protect
+        (progn
+          (lpy-nrepl--server-filter proc "nREPL server started on 127.0.0.1:42")
+          (should-not (process-get proc 'lpy-nrepl-port))
+          (lpy-nrepl--server-filter proc "42\n")
+          (should (equal (process-get proc 'lpy-nrepl-port) 4242)))
+      (delete-process proc)
+      (kill-buffer buf))))
+
+(ert-deftest lpy-nrepl-test-repl-map-binds-switch-to-repl ()
+  ;; The log hints name C-c C-z.
+  (should (eq (lookup-key lpy-nrepl-repl-mode-map (kbd "C-c C-z"))
+              #'lpy-nrepl-switch-to-repl)))
+
 (defmacro lpy-nrepl-test--with-named-log (&rest body)
   "Run BODY with a REPL log buffer named like the real one, then kill it.
 No leading space: Emacs disables undo in such buffers by itself, which
@@ -2187,6 +2207,8 @@ SEND-FN is called with the sent string."
             (should-not lpy-nrepl--latest-by-op)
             (let ((log (lpy-nrepl-test--log-text)))
               (should (string-match-p "send interrupted" log))
+              (should (string-match-p (regexp-quote lpy-nrepl--reconnect-hint)
+                                      log))
               (should (string-match-p "\\b2 pending" log)))))
       (delete-process conn)
       (delete-process server))))
@@ -2230,11 +2252,13 @@ fake processes; the server is current but already dead, as in its sentinel."
 
 (ert-deftest lpy-nrepl-test-connection-sentinel-log-gives-no-restart-hint ()
   ;; Defect: the connection's sentinel can run while our server is alive or
-  ;; dying; its single line must not promise a reconnect or demand a restart.
+  ;; dying; its single line carries the reconnect hint and must not demand a
+  ;; restart.
   (let ((log (lpy-nrepl-test--with-lost-state 5000 5000
                (delete-process conn)
                (lpy-nrepl--process-sentinel conn "connection broken\n"))))
     (should (string-match-p "connection lost" log))
+    (should (string-match-p (regexp-quote lpy-nrepl--reconnect-hint) log))
     (should-not (string-match-p "start a new one" log))))
 
 ;;; Live tests against `lpy --nrepl' (LPY_TEST_NREPL_LPY)
