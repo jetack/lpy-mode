@@ -320,7 +320,9 @@ when ours returns nil."
   (lpy-mode--support-paredit)
 
   (lpy-mode--setup-completion)
-  (lpy-mode--setup-eldoc))
+  (lpy-mode--setup-eldoc)
+  ;; " eval…" while an nREPL eval runs, a hint that C-c C-c interrupts it.
+  (setq mode-line-process '(:eval (lpy-nrepl--eval-status))))
 
 ;;; Bindings
 
@@ -338,6 +340,7 @@ when ours returns nil."
 (define-key lpy-mode-map (kbd "C-c C-m") #'lpy-nrepl-macroexpand)
 (define-key lpy-mode-map (kbd "C-c M-n") #'lpy-nrepl-set-file-scope)
 (define-key lpy-mode-map (kbd "C-c M-:") #'lpy-nrepl-eval-string)
+(define-key lpy-mode-map (kbd "C-c C-c") #'lpy-nrepl-interrupt)
 
 ;;;; Misc
 
@@ -359,6 +362,7 @@ when ours returns nil."
     ["Eval Region (C-c C-r)" lpy-nrepl-eval-region-or-shell]
     ["Eval Buffer (C-c C-b)" lpy-nrepl-eval-buffer-contents-or-shell]
     ["Load File (C-c C-k)" lpy-nrepl-eval-buffer-or-shell]
+    ["Interrupt Eval (C-c C-c)" lpy-nrepl-interrupt]
     "---"
     ["Macroexpand (C-c C-m)" lpy-nrepl-macroexpand]
     ["Set File Scope (C-c M-n)" lpy-nrepl-set-file-scope]
@@ -366,6 +370,7 @@ when ours returns nil."
     "---"
     ["Show REPL (C-c C-z)" lpy-nrepl-switch-to-repl]
     ["Start nREPL Server" lpy-nrepl-start]
+    ["Restart nREPL Server" lpy-nrepl-restart]
     ["Connect to nREPL" lpy-nrepl-connect]
     ["Disconnect nREPL" lpy-nrepl-disconnect]
     "---"

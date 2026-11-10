@@ -45,6 +45,11 @@
 
 ;;; Configuration
 
+(defgroup lpy-nrepl nil
+  "nREPL client for LisPython."
+  :group 'languages
+  :prefix "lpy-nrepl-")
+
 (defvar lpy-nrepl--host "127.0.0.1"
   "Host for the nREPL server.")
 
@@ -104,6 +109,94 @@ Unlike `file' it does not rename the eval; the one home of the key.")
 (defvar lpy-nrepl--eval-string-history nil
   "Minibuffer history for `lpy-nrepl-eval-string'.")
 
+;;; Wire protocol names
+;; Each op and field name the client reads or writes beyond the basic
+;; request/reply has one home here: a misspelt boundary string compiles and
+;; the feature just stops firing.
+
+(defconst lpy-nrepl--op-eval "eval" "Op evaluating a code string.")
+(defconst lpy-nrepl--op-load-file "load-file" "Op loading a file by path.")
+(defconst lpy-nrepl--op-complete "complete" "Op listing completions of a prefix.")
+(defconst lpy-nrepl--op-docs "docs" "Op looking up a symbol's docs.")
+(defconst lpy-nrepl--op-macroexpand "macroexpand" "Op macroexpanding a form.")
+
+(defconst lpy-nrepl--eval-ops (list lpy-nrepl--op-eval lpy-nrepl--op-load-file)
+  "Request ops that run user code.
+They are sent with `lpy-nrepl--stream-field' and tracked in
+`lpy-nrepl--in-flight-evals' until their final reply.")
+
+(defconst lpy-nrepl--stream-field 'stream
+  "Request field opting an eval into interim output messages.")
+
+(defconst lpy-nrepl--out-op "out"
+  "Op of an interim message carrying an eval's output.
+Every other message with an id is that request's final reply.")
+
+(defconst lpy-nrepl--stdout-field 'stdout
+  "Message field holding standard output text.")
+
+(defconst lpy-nrepl--stderr-field 'stderr
+  "Message field holding standard error text.")
+
+(defconst lpy-nrepl--interrupt-op "interrupt"
+  "Op asking the server to raise KeyboardInterrupt in a running request.")
+
+(defconst lpy-nrepl--interrupt-id-field 'interrupt-id
+  "Field of an interrupt request naming the request to interrupt.")
+
+(defconst lpy-nrepl--unknown-op-error "unknown op"
+  "Text of the server's error reply to an op it does not implement.")
+
+(defconst lpy-nrepl--interrupt-result-op "interrupt-result"
+  "Op of the server's reply accepting an interrupt request.")
+
+(defconst lpy-nrepl--superseding-ops (list lpy-nrepl--op-complete lpy-nrepl--op-docs)
+  "Request ops whose newer request makes an older unanswered one moot.
+Sending one drops the pending callback of the previous request of its op,
+so a server that answers nothing (busy on an eval) cannot pile them up.")
+
+;;; Request state
+
+(defvar lpy-nrepl--in-flight-evals nil
+  "Ids of `lpy-nrepl--eval-ops' requests without a final reply, newest first.
+The server runs a connection's evals one at a time in request order, so
+the last element is the running one.")
+
+(defvar lpy-nrepl--ignored-ids nil
+  "Ids of superseded requests whose late final reply is dropped silently.")
+
+(defvar lpy-nrepl--latest-by-op nil
+  "Alist (OP . ID) of the newest request of each `lpy-nrepl--superseding-ops'.")
+
+(defvar lpy-nrepl--answers-during-eval nil
+  "Non-nil once the connection answered a request sent behind an eval.
+That proves the server serves other requests while an eval runs, so
+completion may wait for its reply (`lpy-nrepl--may-wait-p').")
+
+(defcustom lpy-nrepl-request-timeout 1.0
+  "Seconds a synchronous request (completion) waits for its reply, at most.
+Waited once per completion, and not at all while an eval runs on a server
+that has not shown it answers during one (`lpy-nrepl--may-wait-p')."
+  :type 'number
+  :group 'lpy-nrepl)
+
+(defcustom lpy-nrepl-log-max-size 1000000
+  "Most characters the REPL log `*lpy-nrepl*' keeps, or nil for no limit.
+Once over it, whole lines are dropped from the top down to 90% of it, so
+an endless printing loop cannot grow the buffer without bound."
+  :type '(choice (const :tag "Unlimited" nil) integer)
+  :group 'lpy-nrepl)
+
+(defvar lpy-nrepl-start-timeout 10
+  "Seconds `lpy-nrepl-start' waits for the server's port line.")
+
+(defvar lpy-nrepl-interrupt-timeout 2
+  "Seconds after which an unanswered interrupt is reported.")
+
+(defconst lpy-nrepl--server-started-regexp
+  "nREPL server started on [^:\n]+:\\([0-9]+\\)"
+  "Regexp matching the server's startup line; group 1 is the port.")
+
 ;;; Helpers
 
 (defun lpy-nrepl--ns-fields ()
@@ -131,9 +224,32 @@ With FULL, abbreviate the whole path instead of keeping the file name."
         (lpy-nrepl-repl-mode)))
     buf))
 
+(defun lpy-nrepl--trim-log ()
+  "Drop lines from the top of the current buffer to fit the log cap.
+Only once over `lpy-nrepl-log-max-size', and then down to 90% of it, so
+the deletion's cost is spread over many appended chunks.  Window points
+and point are positions the deletion shifts, so they keep their text."
+  (when (and lpy-nrepl-log-max-size
+             (> (buffer-size) lpy-nrepl-log-max-size))
+    (let* ((inhibit-read-only t)
+           (keep (floor (* 0.9 lpy-nrepl-log-max-size)))
+           (cut (max (point-min) (- (point-max) keep)))
+           ;; How far past the cut a line start may move it: unbounded,
+           ;; a cut inside one long line snapped to the newline before
+           ;; the newest entry and dropped almost the whole log.
+           (slack (floor (* 0.1 lpy-nrepl-log-max-size))))
+      (save-excursion
+        (goto-char cut)
+        (unless (or (bolp)
+                    (search-forward "\n" (min (point-max) (+ cut slack)) t))
+          (goto-char cut))
+        (delete-region (point-min) (point))))))
+
 (defun lpy-nrepl--log (direction text)
   "Append TEXT to the nREPL REPL buffer in CIDER-like format.
-DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
+DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\", or
+\"stdout-chunk\" / \"stderr-chunk\" for streamed output, inserted as is:
+a chunk need not end a line.  Any other entry starts on a fresh line."
   (with-current-buffer (lpy-nrepl--repl-buffer)
     ;; Window points are per-window markers and with-current-buffer moves
     ;; only buffer point.  Like comint, follow new output only in windows
@@ -150,7 +266,13 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
           (push win following)))
       (save-excursion
         (goto-char (point-max))
+        (unless (or (bolp) (member direction '("stdout-chunk" "stderr-chunk")))
+          (insert (propertize "\n" 'read-only t)))
         (pcase direction
+          ("stdout-chunk"
+           (insert (propertize text 'read-only t)))
+          ("stderr-chunk"
+           (insert (propertize text 'face 'error 'read-only t)))
           ("input"
            (insert (propertize "repl> " 'face 'font-lock-keyword-face 'read-only t)
                    (propertize (concat text "\n") 'face 'font-lock-string-face 'read-only t)))
@@ -161,7 +283,8 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
           ("error"
            (insert (propertize (concat text "\n") 'face 'error 'read-only t)))
           (_
-           (insert (propertize (concat text "\n") 'read-only t)))))
+           (insert (propertize (concat text "\n") 'read-only t))))
+        (lpy-nrepl--trim-log))
       (when point-at-end
         (goto-char (point-max)))
       (dolist (win following)
@@ -188,43 +311,160 @@ DIRECTION is one of: \"input\" \"value\" \"stdout\" \"error\"."
   "Handle connection state changes of PROC.
 Only the current connection may clear state: a replaced process still
 reports its own deletion, which must not drop its successor."
-  (let ((event-trimmed (string-trim event)))
-    (cond
-     ((string-match-p "^open" event-trimmed)
-      (message "lpy-nrepl: connected"))
-     ((and (eq proc lpy-nrepl--connection)
-           (string-match-p "\\(deleted\\|connection broken\\|failed\\)" event-trimmed))
-      (message "lpy-nrepl: disconnected (%s)" event-trimmed)
+  ;; Liveness, not the event text: the texts vary by platform and cause
+  ;; ("connection broken by remote peer", "deleted", "failed with code
+  ;; ..."), and a missed spelling would leave a dead connection current.
+  (cond
+   ((process-live-p proc)
+    (when (string-prefix-p "open" event)
+      (message "lpy-nrepl: connected")))
+   ((eq proc lpy-nrepl--connection)
+    (lpy-nrepl--connection-lost
+     (format "nREPL connection lost (%s)" (string-trim event))))))
+
+(defun lpy-nrepl--connection-lost (what &optional port)
+  "Drop the current connection after its server went away, and log WHAT.
+WHAT describes the loss.  With PORT, only a connection to that port is
+dropped (the Emacs-owned server's death must not drop a connection to
+another server); WHAT is logged either way.  Pending callbacks and
+in-flight evals are cleared with the connection, and the log line says
+how many requests will never be answered."
+  (let* ((conn lpy-nrepl--connection)
+         (ours (and conn
+                    (or (null port)
+                        (equal (process-contact conn :service) port))))
+         (pending (if ours (length lpy-nrepl--pending-callbacks) 0)))
+    (lpy-nrepl--log
+     "error"
+     (if ours
+         (format ";; %s — %d pending request(s) dropped; C-c C-z or M-x lpy-nrepl-restart to start a new one"
+                 what pending)
+       (format ";; %s" what)))
+    (when ours
       ;; Swap rather than just clearing the variable: a remote-closed process
       ;; stays in `process-list' until deleted, and its callbacks never fire.
-      (lpy-nrepl--swap-connection nil)))))
+      (lpy-nrepl--swap-connection nil))
+    (message "lpy-nrepl: %s" what)))
+
+(defun lpy-nrepl--request-number (id)
+  "Return request ID (a string) as a number, for ordering."
+  (if (stringp id) (string-to-number id) 0))
+
+(defun lpy-nrepl--log-output (msg)
+  "Append the output an interim message MSG carries to the REPL log."
+  (let ((out (alist-get lpy-nrepl--stdout-field msg))
+        (err (alist-get lpy-nrepl--stderr-field msg)))
+    (when (and (stringp out) (not (string-empty-p out)))
+      (lpy-nrepl--log "stdout-chunk" out))
+    (when (and (stringp err) (not (string-empty-p err)))
+      (lpy-nrepl--log "stderr-chunk" err))))
+
+(defun lpy-nrepl--finish-request (id)
+  "Forget request ID as in flight; its final reply has arrived."
+  (when (member id lpy-nrepl--in-flight-evals)
+    (setq lpy-nrepl--in-flight-evals (delete id lpy-nrepl--in-flight-evals))
+    (force-mode-line-update t)))
 
 (defun lpy-nrepl--handle-response (msg)
-  "Dispatch a parsed JSON response MSG to the appropriate callback."
+  "Dispatch a parsed JSON response MSG.
+An interim `lpy-nrepl--out-op' message is logged as output and keeps its
+request open, whatever the request; any other message is the request's
+final reply and is passed to its callback, which is then forgotten."
   (let* ((id (alist-get 'id msg))
          (entry (and id (assoc id lpy-nrepl--pending-callbacks))))
-    (if entry
-        (progn
-          (setq lpy-nrepl--pending-callbacks
-                (delq entry lpy-nrepl--pending-callbacks))
-          (funcall (cdr entry) msg))
-      ;; No pending callback -- log it for async/unsolicited messages
-      (lpy-nrepl--log "<=" (json-serialize msg)))))
+    (if (equal (alist-get 'op msg) lpy-nrepl--out-op)
+        (lpy-nrepl--log-output msg)
+      (let ((running (car (last lpy-nrepl--in-flight-evals))))
+        ;; A reply to a request sent after the running eval: the server
+        ;; answers while evaluating (an old one answers in order).
+        (when (and running (not (equal id running))
+                   (> (lpy-nrepl--request-number id)
+                      (lpy-nrepl--request-number running)))
+          (setq lpy-nrepl--answers-during-eval t)))
+      (lpy-nrepl--finish-request id)
+      (cond
+       (entry
+        (setq lpy-nrepl--pending-callbacks
+              (delq entry lpy-nrepl--pending-callbacks))
+        (funcall (cdr entry) msg))
+       ((member id lpy-nrepl--ignored-ids)
+        (setq lpy-nrepl--ignored-ids (delete id lpy-nrepl--ignored-ids)))
+       ;; No pending callback -- log it for async/unsolicited messages
+       (t (lpy-nrepl--log "<=" (json-serialize msg)))))))
+
+(defun lpy-nrepl--supersede (op id)
+  "Record ID as the newest request of OP, dropping the previous one's callback.
+Only `lpy-nrepl--superseding-ops' are affected."
+  (when (member op lpy-nrepl--superseding-ops)
+    (let* ((cell (assoc op lpy-nrepl--latest-by-op))
+           (old (cdr cell))
+           (entry (and old (assoc old lpy-nrepl--pending-callbacks))))
+      (when entry
+        (setq lpy-nrepl--pending-callbacks
+              (delq entry lpy-nrepl--pending-callbacks))
+        (push old lpy-nrepl--ignored-ids))
+      (if cell
+          (setcdr cell id)
+        (push (cons op id) lpy-nrepl--latest-by-op)))))
 
 (defun lpy-nrepl--send (msg &optional callback)
   "Send MSG (an alist) as newline-delimited JSON to the nREPL server.
-If CALLBACK is non-nil, register it to be called with the response."
+If CALLBACK is non-nil, register it to be called with the final reply.
+Eval requests (`lpy-nrepl--eval-ops') ask for streamed output and are
+tracked in flight until their final reply.  Return the request id."
   (unless (lpy-nrepl-connected-p)
     (user-error "Not connected to nREPL server"))
-  (let ((id (lpy-nrepl--next-id)))
-    (push (cons 'id id) msg)
+  (let* ((id (lpy-nrepl--next-id))
+         (op (alist-get 'op msg))
+         (eval-p (member op lpy-nrepl--eval-ops))
+         (json-str (json-serialize
+                    `((id . ,id) ,@msg
+                      ,@(and eval-p (list (cons lpy-nrepl--stream-field t))))))
+         (code (alist-get 'code msg)))
+    ;; Registered only once serialized: a message that cannot be encoded
+    ;; must not leave an eval in flight or a callback waiting forever.
+    ;; The callback and in-flight entry go in before the send, since a
+    ;; reply may be read during it; a failed send takes them out again,
+    ;; and the log and superseding happen only once it succeeded.
+    (when eval-p
+      (push id lpy-nrepl--in-flight-evals)
+      (force-mode-line-update t))
     (when callback
       (push (cons id callback) lpy-nrepl--pending-callbacks))
-    (let ((json-str (json-serialize msg))
-          (code (alist-get 'code msg)))
-      (when code
-        (lpy-nrepl--log "input" code))
-      (process-send-string lpy-nrepl--connection (concat json-str "\n")))))
+    (condition-case err
+        (process-send-string lpy-nrepl--connection (concat json-str "\n"))
+      (error
+       (setq lpy-nrepl--pending-callbacks
+             (assoc-delete-all id lpy-nrepl--pending-callbacks))
+       (lpy-nrepl--finish-request id)
+       (signal (car err) (cdr err))))
+    (lpy-nrepl--supersede op id)
+    (when code
+      (lpy-nrepl--log "input" code))
+    id))
+
+(defun lpy-nrepl--may-wait-p ()
+  "Return non-nil when a synchronous request may wait for its reply.
+Not while an eval is in flight on a server that has not shown it answers
+during one: an old server answers a connection's requests in order, so
+nothing comes back until the eval ends, and the wait would only stall
+the keystroke (from corfu's timer, where \\[keyboard-quit] cannot break it)."
+  (or (null lpy-nrepl--in-flight-evals)
+      lpy-nrepl--answers-during-eval))
+
+(defun lpy-nrepl--await (done)
+  "Wait, for a bounded time, until calling DONE gives non-nil.
+Waits at most `lpy-nrepl-request-timeout' seconds, and not at all when
+`lpy-nrepl--may-wait-p' says no reply can come.  \\[keyboard-quit] ends
+the wait even under `inhibit-quit' (a timer), and is then re-signalled
+outside it."
+  (when (lpy-nrepl--may-wait-p)
+    (let ((deadline (+ (float-time) lpy-nrepl-request-timeout)))
+      (with-local-quit
+        (while (and (not (funcall done))
+                    (lpy-nrepl-connected-p)
+                    (< (float-time) deadline))
+          (accept-process-output lpy-nrepl--connection 0.02))))))
 
 ;;; Connection Management
 
@@ -263,13 +503,19 @@ DIR defaults to `default-directory'."
 
 (defun lpy-nrepl--swap-connection (new)
   "Make NEW (a process or nil) the connection and delete the previous one.
-Pending callbacks belong to the old connection and are dropped.  NEW is
+Pending callbacks, in-flight evals and the rest of the request state
+belong to the old connection and are dropped.  NEW is
 installed before the old process is deleted: `delete-process' runs its
 sentinel synchronously, and the sentinel only clears state for the current
 connection, so it must no longer see the old process as current."
   (let ((old lpy-nrepl--connection))
     (setq lpy-nrepl--connection new)
-    (setq lpy-nrepl--pending-callbacks nil)
+    (setq lpy-nrepl--pending-callbacks nil
+          lpy-nrepl--in-flight-evals nil
+          lpy-nrepl--ignored-ids nil
+          lpy-nrepl--latest-by-op nil
+          lpy-nrepl--answers-during-eval nil)
+    (force-mode-line-update t)
     ;; A replaced or dropped server's file scopes may be gone, and string
     ;; evals would silently run in an empty one; the log records the reset.
     ;; Quiet: the caller's own message (e.g. the sentinel's disconnect reason)
@@ -325,42 +571,125 @@ Interactively, the port defaults to the one in the nearest `.nrepl-port'."
     (lpy-nrepl--swap-connection nil)
     (message "lpy-nrepl: disconnected")))
 
+(defun lpy-nrepl--server-filter (proc output)
+  "Insert OUTPUT of server PROC in its buffer; connect once it names its port.
+Only PROC's own output is searched for the port line, accumulated in its
+`lpy-nrepl-output' property until the line appears."
+  (when (buffer-live-p (process-buffer proc))
+    (with-current-buffer (process-buffer proc)
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (insert output)))))
+  (unless (process-get proc 'lpy-nrepl-port)
+    (let ((seen (concat (process-get proc 'lpy-nrepl-output) output)))
+      (process-put proc 'lpy-nrepl-output seen)
+      (when (string-match lpy-nrepl--server-started-regexp seen)
+        (let ((port (string-to-number (match-string 1 seen))))
+          (process-put proc 'lpy-nrepl-port port)
+          (process-put proc 'lpy-nrepl-output nil)
+          (lpy-nrepl--cancel-start-timer proc)
+          (when (eq proc lpy-nrepl--server-process)
+            (condition-case err
+                (progn
+                  (lpy-nrepl-connect port)
+                  (message "lpy-nrepl: server started on port %d" port))
+              (error
+               (message "lpy-nrepl: server started on port %d but connecting failed: %s"
+                        port (error-message-string err))))))))))
+
+(defun lpy-nrepl--cancel-start-timer (proc)
+  "Cancel the startup timeout timer of server PROC, if any."
+  (let ((timer (process-get proc 'lpy-nrepl-timer)))
+    (when (timerp timer)
+      (cancel-timer timer))
+    (process-put proc 'lpy-nrepl-timer nil)))
+
+(defun lpy-nrepl--start-timed-out (proc)
+  "Give up on server PROC, which never printed its port line."
+  (process-put proc 'lpy-nrepl-timer nil)
+  (unless (process-get proc 'lpy-nrepl-port)
+    ;; Not current first: its sentinel must not report a server death.
+    (when (eq proc lpy-nrepl--server-process)
+      (setq lpy-nrepl--server-process nil))
+    (delete-process proc)
+    (message "lpy-nrepl: timed out waiting for the nREPL server to start; see %s"
+             lpy-nrepl--server-buffer-name)))
+
+(defun lpy-nrepl--server-sentinel (proc event)
+  "Handle the exit of server PROC, described by EVENT.
+Only the current server (`lpy-nrepl--server-process') clears state: a
+replaced one still reports its own exit."
+  ;; Liveness, not the event text: the texts vary ("killed: 9",
+  ;; "terminated", "exited abnormally with code 1", "finished"), and a
+  ;; missed one left `lpy-nrepl--server-process' naming a dead server.
+  (unless (process-live-p proc)
+    (lpy-nrepl--cancel-start-timer proc)
+    (when (eq proc lpy-nrepl--server-process)
+      (setq lpy-nrepl--server-process nil)
+      (let ((port (process-get proc 'lpy-nrepl-port))
+            (what (string-trim event)))
+        (if port
+            (lpy-nrepl--connection-lost (format "nREPL server died (%s)" what)
+                                        port)
+          (message "lpy-nrepl: nREPL server exited before it started (%s); see %s"
+                   what lpy-nrepl--server-buffer-name))))))
+
 ;;;###autoload
 (defun lpy-nrepl-start ()
-  "Start `lpy --nrepl' as a subprocess, parse the port, and connect.
-The server process output is captured in `*lpy-nrepl-server*'."
+  "Start `lpy --nrepl' as a subprocess and connect once it names its port.
+Return at once; the connection is made when the server prints its port
+line, or the start is abandoned after `lpy-nrepl-start-timeout' seconds.
+The server's output is captured in `*lpy-nrepl-server*'.  Return the
+server process."
   (interactive)
-  (when (and lpy-nrepl--server-process
-             (process-live-p lpy-nrepl--server-process))
+  (when (process-live-p lpy-nrepl--server-process)
     (user-error "nREPL server already running (pid %d)"
                 (process-id lpy-nrepl--server-process)))
-  (let* ((buf (get-buffer-create lpy-nrepl--server-buffer-name))
-         (port-found nil)
-         (proc (make-process
-                :name "lpy-nrepl-server"
-                :buffer buf
-                :command (list lpy-nrepl--interpreter "--nrepl")
-                :noquery t
-                :sentinel
-                (lambda (_proc event)
-                  (let ((event-trimmed (string-trim event)))
-                    (unless (string-match-p "^open" event-trimmed)
-                      (message "lpy-nrepl-server: %s" event-trimmed)
-                      (when (string-match-p "\\(finished\\|exited\\|killed\\)" event-trimmed)
-                        (setq lpy-nrepl--server-process nil))))))))
-    (setq lpy-nrepl--server-process proc)
-    (message "lpy-nrepl: starting server...")
-    ;; Wait for the server to print its port line
-    (with-timeout (10 (user-error "Timed out waiting for nREPL server to start"))
-      (while (not port-found)
-        (accept-process-output proc 0.1)
-        (with-current-buffer buf
-          (goto-char (point-min))
-          (when (re-search-forward
-                 "nREPL server started on [^:]+:\\([0-9]+\\)" nil t)
-            (setq port-found (string-to-number (match-string 1)))))))
-    (lpy-nrepl-connect port-found)
-    (message "lpy-nrepl: server started on port %d" port-found)))
+  ;; The buffer is emptied and the port read only from the new process's
+  ;; own output: a dead server's "started on ...:PORT" line left in the
+  ;; buffer would otherwise be found first, and the client would connect
+  ;; to that dead port.
+  (let ((buf (get-buffer-create lpy-nrepl--server-buffer-name)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)))
+    (let ((proc (make-process
+                 :name "lpy-nrepl-server"
+                 :buffer buf
+                 :command (list lpy-nrepl--interpreter "--nrepl")
+                 :noquery t
+                 :connection-type 'pipe
+                 :filter #'lpy-nrepl--server-filter
+                 :sentinel #'lpy-nrepl--server-sentinel)))
+      (process-put proc 'lpy-nrepl-output "")
+      ;; A timer, not a blocking wait: Emacs stays usable while the server
+      ;; imports, and a server that never starts is reported and killed.
+      (process-put proc 'lpy-nrepl-timer
+                   (run-at-time lpy-nrepl-start-timeout nil
+                                #'lpy-nrepl--start-timed-out proc))
+      (setq lpy-nrepl--server-process proc)
+      (message "lpy-nrepl: starting server...")
+      proc)))
+
+;;;###autoload
+(defun lpy-nrepl-restart ()
+  "Kill the Emacs-started nREPL server, drop the connection, start afresh.
+Recovers from a hung server, or one too old to interrupt an eval."
+  (interactive)
+  (let ((old lpy-nrepl--server-process))
+    ;; Not current first, so its sentinel reports no death.
+    (setq lpy-nrepl--server-process nil)
+    (when old
+      (lpy-nrepl--cancel-start-timer old)
+      (delete-process old)))
+  (when lpy-nrepl--connection
+    (let ((pending (length lpy-nrepl--pending-callbacks)))
+      (lpy-nrepl--swap-connection nil)
+      (lpy-nrepl--log "error"
+                      (format ";; nREPL restarted — %d pending request(s) dropped"
+                              pending))))
+  (lpy-nrepl-start))
 
 ;;; Result Display
 
@@ -396,8 +725,10 @@ The overlay disappears after `lpy-nrepl--overlay-duration' seconds."
 (defun lpy-nrepl--display-eval-result (response)
   "Display an eval RESPONSE in the minibuffer and as an overlay."
   (let ((value (alist-get 'value response))
-        (stdout (alist-get 'stdout response))
-        (stderr (alist-get 'stderr response))
+        ;; A streaming server sent the output already (`lpy-nrepl--out-op')
+        ;; and sends "" here; an old one sends all of it here.
+        (stdout (alist-get lpy-nrepl--stdout-field response))
+        (stderr (alist-get lpy-nrepl--stderr-field response))
         (error-msg (alist-get 'error response)))
     (when (and stdout (not (string-empty-p stdout)))
       (lpy-nrepl--log "stdout" (string-trim-right stdout)))
@@ -467,7 +798,7 @@ The result goes to the echo area and REPL log, with no overlay."
     (when (string-empty-p trimmed)
       (user-error "Nothing to evaluate"))
     (lpy-nrepl--send
-     `((op . "eval") (code . ,trimmed) ,@(lpy-nrepl--ns-fields))
+     `((op . ,lpy-nrepl--op-eval) (code . ,trimmed) ,@(lpy-nrepl--ns-fields))
      (lambda (response)
        ;; Not tied to a source buffer: keep an earlier eval's overlay target
        ;; (buffer-local) from receiving this result.
@@ -502,7 +833,7 @@ position sent is that of its first character after the trim."
   (setq lpy-nrepl--eval-point (point))
   (let ((leading (- (length code) (length (string-trim-left code)))))
     (lpy-nrepl--send
-     `((op . "eval") (code . ,(string-trim code))
+     `((op . ,lpy-nrepl--op-eval) (code . ,(string-trim code))
        ,@(lpy-nrepl--position-fields (+ start leading)))
      #'lpy-nrepl--display-eval-result)))
 
@@ -543,7 +874,7 @@ Sends a `load-file' operation with the buffer's file path."
   (when (buffer-modified-p)
     (save-buffer))
   (lpy-nrepl--send
-   `((op . "load-file") (path . ,(buffer-file-name)))
+   `((op . ,lpy-nrepl--op-load-file) (path . ,(buffer-file-name)))
    #'lpy-nrepl--display-eval-result))
 
 ;;;###autoload
@@ -556,6 +887,55 @@ Sends the buffer text directly as an eval operation."
       (user-error "Buffer is empty"))
     (lpy-nrepl--eval-code code (point-min))))
 
+(defun lpy-nrepl--interrupt-reply (target response)
+  "Report RESPONSE, the server's reply to an interrupt of eval TARGET."
+  (let ((err (alist-get 'error response)))
+    (cond
+     ((equal (alist-get 'op response) lpy-nrepl--interrupt-result-op)
+      (message "lpy-nrepl: interrupted eval %s" target))
+     ((and (stringp err) (string-match-p lpy-nrepl--unknown-op-error err))
+      (lpy-nrepl--log "error" ";; this nREPL server cannot interrupt an eval")
+      (message "lpy-nrepl: the server is too old to interrupt; upgrade lispython (nREPL streaming and interrupt support) or M-x lpy-nrepl-restart"))
+     (t
+      (message "lpy-nrepl: interrupt of eval %s failed: %s"
+               target (or err (json-serialize response)))))))
+
+(defun lpy-nrepl--interrupt-unanswered (request target)
+  "Report that interrupt REQUEST of eval TARGET is still unanswered.
+A server that answers requests only in order (one without interrupt
+support) cannot reply while the eval it should interrupt runs."
+  (when (assoc request lpy-nrepl--pending-callbacks)
+    (message "lpy-nrepl: the server did not answer the interrupt of eval %s; it may be too old to interrupt (upgrade lispython), or M-x lpy-nrepl-restart"
+             target)))
+
+;;;###autoload
+(defun lpy-nrepl-interrupt (&optional all)
+  "Interrupt the running nREPL evaluation.
+The server runs a connection's evals one at a time in request order, so
+the oldest unfinished eval is the running one.  With prefix argument
+ALL, interrupt every unfinished eval, the queued ones too.  The eval
+then ends with a KeyboardInterrupt error.  Needs lispython with nREPL
+streaming and interrupt support; otherwise use `lpy-nrepl-restart'."
+  (interactive "P")
+  (if (or (null lpy-nrepl--in-flight-evals) (not (lpy-nrepl-connected-p)))
+      (message "No evaluation running")
+    (dolist (target (if all
+                        (reverse lpy-nrepl--in-flight-evals)
+                      (last lpy-nrepl--in-flight-evals)))
+      (lpy-nrepl--log "error" (format ";; interrupting eval %s" target))
+      (let ((request
+             (lpy-nrepl--send
+              `((op . ,lpy-nrepl--interrupt-op)
+                (,lpy-nrepl--interrupt-id-field . ,target))
+              (lambda (response)
+                (lpy-nrepl--interrupt-reply target response)))))
+        (run-at-time lpy-nrepl-interrupt-timeout nil
+                     #'lpy-nrepl--interrupt-unanswered request target)))))
+
+(defun lpy-nrepl--eval-status ()
+  "Return the mode-line text showing that an eval is running, or \"\"."
+  (if lpy-nrepl--in-flight-evals " eval…" ""))
+
 ;;;###autoload
 (defun lpy-nrepl-macroexpand ()
   "Macroexpand the form at point via nREPL.
@@ -565,7 +945,7 @@ resolved in the buffer file's scope (the session scope without a file)."
   (-when-let (code (or (lpy--current-form-string)
                        (lpy--last-sexp-string)))
     (lpy-nrepl--send
-     `((op . "macroexpand") (code . ,(string-trim code))
+     `((op . ,lpy-nrepl--op-macroexpand) (code . ,(string-trim code))
        ,@(lpy-nrepl--file-fields))
      #'lpy-nrepl--display-macroexpand-result)))
 
@@ -1120,14 +1500,20 @@ the table lists the labels whose filterText does, so `my_v' keeps
            (file-fields (lpy-nrepl--file-fields))
            (items (make-hash-table :test #'equal)) ; label -> (KIND-NUMBER DESCRIPTION FILTER-TEXT)
            (labels nil)
+           (requested nil)
            (fetched nil)
            (fetch
             (lambda ()
               ;; The fetch depends only on the prefix captured above, so
-              ;; one request serves every table call; a timeout stays retryable.
-              (unless fetched
+              ;; one request serves every table call.  Sent and waited for
+              ;; once, even unanswered: a busy server answers no re-send
+              ;; either, and each table call (corfu makes several per
+              ;; keystroke) would stall again.  A late reply still fills
+              ;; the table; `lpy--rerunning-capf' re-asks on the next key.
+              (unless requested
+                (setq requested t)
                 (lpy-nrepl--send
-                 `((op . "complete") (prefix . ,prefix) ,@file-fields)
+                 `((op . ,lpy-nrepl--op-complete) (prefix . ,prefix) ,@file-fields)
                  (lambda (response)
                    (setq items (make-hash-table :test #'equal)
                          labels nil)
@@ -1143,9 +1529,7 @@ the table lists the labels whose filterText does, so `my_v' keeps
                          (alist-get 'items response))
                    (setq labels (nreverse labels)
                          fetched t)))
-                (with-timeout (1 nil)
-                  (while (not fetched)
-                    (accept-process-output lpy-nrepl--connection 0.05)))))))
+                (lpy-nrepl--await (lambda () fetched))))))
       (when (> (length prefix) 0)
         (list start end
               (lambda (str pred action)
@@ -1510,7 +1894,7 @@ looked up in the buffer file's scope (the session scope without a file)."
                         (thing-at-point 'symbol t)))))
       (when (and symbol (> (length symbol) 0))
         (lpy-nrepl--send
-         `((op . "docs") (symbol . ,symbol) ,@(lpy-nrepl--file-fields))
+         `((op . ,lpy-nrepl--op-docs) (symbol . ,symbol) ,@(lpy-nrepl--file-fields))
          (lambda (response)
            (let ((docs (alist-get 'docs response)))
              (when docs
@@ -1568,6 +1952,11 @@ Falls back to `run-lpy' comint shell when not connected."
    ((lpy-nrepl-connected-p)
     (display-buffer (lpy-nrepl--repl-buffer)
                     '(display-buffer-at-bottom . ((window-height . 0.3)))))
+   ((process-live-p lpy-nrepl--server-process)
+    (let ((port (process-get lpy-nrepl--server-process 'lpy-nrepl-port)))
+      (if port
+          (lpy-nrepl-connect port)
+        (message "lpy-nrepl: the nREPL server is still starting"))))
    (t
     (if (y-or-n-p "No nREPL connection.  Start nREPL server?")
         (lpy-nrepl-start)
@@ -1580,6 +1969,7 @@ Falls back to `run-lpy' comint shell when not connected."
     (define-key map (kbd "q") #'quit-window)
     (define-key map (kbd "C-c M-n") #'lpy-nrepl-set-file-scope)
     (define-key map (kbd "C-c M-:") #'lpy-nrepl-eval-string)
+    (define-key map (kbd "C-c C-c") #'lpy-nrepl-interrupt)
     map)
   "Keymap for `lpy-nrepl-repl-mode'.")
 
@@ -1588,11 +1978,15 @@ Falls back to `run-lpy' comint shell when not connected."
 Shows input sent to and output received from the nREPL server."
   (setq-local truncate-lines nil)
   (setq-local word-wrap t)
+  ;; A log, like *Messages*: with undo on, every line the cap trims
+  ;; (`lpy-nrepl--trim-log') is kept in `buffer-undo-list', so the growth
+  ;; an endless printing loop causes just moves there.
+  (buffer-disable-undo)
   (setq mode-line-process
         '(:eval (concat " ["
                   (replace-regexp-in-string "%" "%%" (lpy-nrepl--scope-label)
                                             t t)
-                  "]"))))
+                  "]" (lpy-nrepl--eval-status)))))
 
 ;;; Provide:
 
