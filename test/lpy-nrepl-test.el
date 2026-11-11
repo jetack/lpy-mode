@@ -810,6 +810,48 @@ the word at capf time and matches every later input against that answer."
                    (lpy-nrepl-test--find "my-var" (corfu-update)) 'finished)
           (should (equal lpy-nrepl-test--calls '("my-v"))))))))
 
+(ert-deftest lpy-nrepl-test-capf-lists-nothing-after-word-ends ()
+  ;; Defect: after `(* ' the session keeps the table answered for `*',
+  ;; so a fallback style (orderless) asking it for "" gets every old
+  ;; candidate and the popup stays open with `*', `**', `*=', `**='.
+  ;; Run once with eglot answering at the moved bounds and once with no
+  ;; source answering at all (nil result).
+  (dolist (gone '(nil t))
+    (with-temp-buffer
+      (insert "(*")
+      (cl-letf (((symbol-function 'eglot-managed-p) (lambda () t))
+                ((symbol-function 'eglot-completion-at-point)
+                 (lambda ()
+                   ;; Bounds as eglot takes them: the symbol at point,
+                   ;; which `lpy--merged-capf' points at the word span.
+                   (let ((bounds (or (bounds-of-thing-at-point 'symbol)
+                                     (cons (point) (point))))
+                         (cache nil))
+                     (unless (and gone (= (car bounds) (point)))
+                       (list (car bounds) (cdr bounds)
+                             (lambda (str _pred action)
+                               (pcase action
+                                 ('metadata '(metadata (category . eglot-capf)))
+                                 ('t (unless cache
+                                       (setq cache (list "*" "**" "*=" "**=")))
+                                     ;; Flex match, as eglot's: "" lists all.
+                                     (cl-remove-if-not
+                                      (lambda (c)
+                                        (string-match-p
+                                         (mapconcat (lambda (ch)
+                                                      (regexp-quote (string ch)))
+                                                    str ".*")
+                                         c))
+                                      cache))
+                                 (_ nil))))))))
+                ((symbol-function 'lpy-nrepl-completion-at-point) #'ignore))
+        (pcase-let ((`(,_ ,_ ,table . ,_) (lpy-completion-at-point)))
+          (should (equal (sort (all-completions "*" table nil) #'string<)
+                         '("*" "**" "**=" "*=")))
+          (dolist (char '(" " "n"))
+            (insert char)
+            (should-not (all-completions "" table nil))))))))
+
 (defun lpy-nrepl-test--text-edit-eglot-capf ()
   "Stub of `eglot-completion-at-point' whose exit applies a textEdit.
 Each candidate's edit covers the word as it was at the request.  As
