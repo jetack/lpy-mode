@@ -1895,7 +1895,9 @@ corfu keeps one table for its whole session, so an answer the server
 marked isIncomplete would never be re-asked while typing.  The returned
 table re-calls CAPF when its candidates are asked for and the text
 between the bounds has changed, and lists the new result's candidates
-when its bounds are the same.  Each listed candidate is tagged with
+when its bounds are the same.  A re-run with no result or other
+bounds means the word has ended, and the table then answers nothing
+until a re-run has the session's bounds again.  Each listed candidate is tagged with
 the plist of the CAPF call that produced it, and the returned
 per-candidate properties apply that plist's functions, so a candidate
 keeps its exit function and docs after later re-runs.  Modelled on
@@ -1927,10 +1929,15 @@ cape's `cape-wrap-buster'."
                           ((and `(,new-beg ,new-end ,new-table . ,new-plist)
                                 (guard (and (= beg new-beg) (= end new-end))))
                            (setq table new-table
-                                 latest new-plist)))
-                        ;; Recorded even when the bounds moved (after a
-                        ;; `corfu-insert-separator' they start past the
-                        ;; space), so the old table is not re-run on
+                                 latest new-plist))
+                          ;; No result or moved bounds: the session's
+                          ;; word has ended (a space was typed).  The old
+                          ;; table is server-filtered and answers only for
+                          ;; its own word; kept, it would feed the user's
+                          ;; fallback style (orderless) every old
+                          ;; candidate, so the session lists nothing.
+                          (_ (setq table nil)))
+                        ;; Recorded either way, so CAPF is not re-run on
                         ;; every call.
                         (setq input new-input)))))))
             (if (eq action t)
