@@ -1135,7 +1135,7 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 (defconst lpy--word-boundary-rule
   '((unicode . "15.1.0")
     (stopChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
-                  "\u001f" " " "\"" ")" "," ";" "[" "]" "}" "\u0085" "\u00a0"
+                  "\u001f" " " "\"" ")" "," ";" "[" "]" "{" "}" "\u0085" "\u00a0"
                   "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
                   "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
                   "\u2028" "\u2029" "\u202f" "\u205f" "\u3000"))
@@ -1144,6 +1144,11 @@ rule of eglot and nREPL candidates, so one kind displays identically."
                      "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
                      "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
                      "\u2028" "\u2029" "\u202f" "\u205f" "\u3000"))
+    (numberEndChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
+                       "\u001f" " " ")" "," ";" "]" "{" "}" "\u0085" "\u00a0"
+                       "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
+                       "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
+                       "\u2028" "\u2029" "\u202f" "\u205f" "\u3000"))
     (wrappers . ("" "*" "^" "**"))
     (openings . ("(" "[" "{"))
     (metaChars . ("'" "`" "~" "~@"))
@@ -1357,6 +1362,11 @@ being silently mistranslated."
          ;; Python's `$' over a line: its end, never before a newline.
          (form-end (concat "\\(?:" (lpy--word-char-class form-end-chars)
                            "\\|\\'\\)"))
+         ;; A number ends at its own set, which also holds `{'.
+         (number-end (concat "\\(?:"
+                             (lpy--word-char-class
+                              (lpy--word-rule-chars 'numberEndChars))
+                             "\\|\\'\\)"))
          (wrapper (lpy--word-one-of (lpy--word-rule 'wrappers)))
          (opening (lpy--word-one-of (lpy--word-rule 'openings)))
          (meta (lpy--word-one-of (lpy--word-rule 'metaChars)))
@@ -1378,7 +1388,7 @@ being silently mistranslated."
                       ahead "\\(?:" stop "\\|\\'\\)\\)"))
       (number . ,(concat "\\`\\(?:" (lpy--word-python-regexp
                                      (lpy--word-rule 'numberToken))
-                         "\\)" ahead form-end))
+                         "\\)" ahead number-end))
       (symbol . ,(concat "\\`" (lpy--word-char-class lpy--word-stop-chars t)
                          "+"))))
   "Each token kind as (KIND . REGEXP), in the order the spec tries them.

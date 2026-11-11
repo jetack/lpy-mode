@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "columns": "code points",
   "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode (\\w holds 한, \\d holds ١)",
   "rule": {
@@ -21,6 +21,7 @@
       ";",
       "[",
       "]",
+      "{",
       "}",
       "",
       " ",
@@ -57,6 +58,43 @@
       ",",
       ";",
       "]",
+      "}",
+      "",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      "　"
+    ],
+    "numberEndChars": [
+      "\t",
+      "\n",
+      "\u000b",
+      "\f",
+      "\r",
+      "\u001c",
+      "\u001d",
+      "\u001e",
+      "\u001f",
+      " ",
+      ")",
+      ",",
+      ";",
+      "]",
+      "{",
       "}",
       "",
       " ",
@@ -139,7 +177,7 @@
     "signedComplex": "[+-]*(?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)[+-](?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)",
     "steps": [
       "run: the stretch of the line around the caret holding no stopChars",
-      "lex the line, not the run alone, from the run's start, token after token, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a number (numberToken, followed by a formEndChars character or the line's end); else a symbol (the rest of the run). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
+      "lex the line, not the run alone, from the run's start, token after token, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a number (numberToken, followed by a numberEndChars character or the line's end); else a symbol (the rest of the run). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
       "the word token: the first token that ends after the caret, or ends at it and is a symbol or number; when there is none, or it is neither a symbol nor a number, the word is empty at the caret",
       "peel the word token's front, repeatedly: never a neverPeeled token; never a number token that does not start with a signs character or that matches signedComplex whole; never a token under 2 characters; else the first tokenPrefixes entry it starts with, after which the rest is a number when it matches numberToken whole and keeps its type otherwise; else a run of signs followed by a str.isalnum character or a signPeelFollowers one, the rest keeping its type; else nothing (the rest is the leaf)",
       "start: the leaf's start, or the token's when the caret is in the peeled front",
@@ -703,6 +741,69 @@
     },
     {
       "text": "a\u001cb",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "f\"{1:{wi",
+      "caret": 8,
+      "start": 6,
+      "replaceStart": 6,
+      "end": 8
+    },
+    {
+      "text": "f\"{x:>{wi}}\"",
+      "caret": 9,
+      "start": 7,
+      "replaceStart": 7,
+      "end": 9
+    },
+    {
+      "text": "f\"ab{wi",
+      "caret": 7,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 7
+    },
+    {
+      "text": "f\"{a}b{c}\"",
+      "caret": 8,
+      "start": 7,
+      "replaceStart": 7,
+      "end": 8
+    },
+    {
+      "text": "a{b",
+      "caret": 3,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 3
+    },
+    {
+      "text": "a{b",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 1
+    },
+    {
+      "text": "1{x",
+      "caret": 1,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 1
+    },
+    {
+      "text": "-1+2j{x",
+      "caret": 5,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 5
+    },
+    {
+      "text": "1{x",
       "caret": 3,
       "start": 2,
       "replaceStart": 2,
