@@ -1994,6 +1994,22 @@ Return the seconds they took."
       (delete-process proc)
       (kill-buffer buf))))
 
+(ert-deftest lpy-nrepl-test-server-port-line-ipv6-host ()
+  ;; Defect: a host part of `[^:\n]+' never matched an IPv6 host, so the
+  ;; server was never recorded as started.
+  (dolist (case '(("::1" . 4242) ("[::1]" . 4243) ("127.0.0.1" . 4244)))
+    (let* ((buf (generate-new-buffer " *lpy-nrepl-test-server*"))
+           (proc (make-pipe-process :name "lpy-nrepl-test-srv" :buffer buf
+                                    :noquery t))
+           (lpy-nrepl--server-process nil))
+      (unwind-protect
+          (progn
+            (lpy-nrepl--server-filter
+             proc (format "nREPL server started on %s:%d\r\n" (car case) (cdr case)))
+            (should (equal (process-get proc 'lpy-nrepl-port) (cdr case))))
+        (delete-process proc)
+        (kill-buffer buf)))))
+
 (ert-deftest lpy-nrepl-test-repl-map-binds-switch-to-repl ()
   ;; The log hints name C-c C-z.
   (should (eq (lookup-key lpy-nrepl-repl-mode-map (kbd "C-c C-z"))

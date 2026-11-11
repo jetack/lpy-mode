@@ -203,8 +203,10 @@ Trimmed like `lpy-nrepl-log-max-size'."
   "Seconds after which an unanswered interrupt is reported.")
 
 (defconst lpy-nrepl--server-started-regexp
-  "nREPL server started on [^:\n]+:\\([0-9]+\\)\r?\n"
+  "nREPL server started on [^\n]+:\\([0-9]+\\)\r?\n"
   "Regexp matching the server's startup line; group 1 is the port.
+The host may itself contain colons (`::1', `[::1]'), so the port is the
+digits after the last colon of the line.
 The line must be complete: a port line split across output chunks would
 otherwise record the digits seen so far.")
 
