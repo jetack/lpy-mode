@@ -1896,9 +1896,10 @@ marked isIncomplete would never be re-asked while typing.  The returned
 table re-calls CAPF when its candidates are asked for and the text
 between the bounds has changed, and lists the new result's candidates
 when its bounds are the same.  A re-run with no result or other
-bounds means the word has ended, and the table then answers nothing
-until a re-run has the session's bounds again.  Each listed candidate is tagged with
-the plist of the CAPF call that produced it, and the returned
+bounds means the session's word (the text from the session's start)
+is no longer the word at point, so the table answers nothing until a
+re-run has the session's bounds again.  Each listed candidate is
+tagged with the plist of the CAPF call that produced it, and the returned
 per-candidate properties apply that plist's functions, so a candidate
 keeps its exit function and docs after later re-runs.  Modelled on
 cape's `cape-wrap-buster'."
@@ -1931,11 +1932,12 @@ cape's `cape-wrap-buster'."
                            (setq table new-table
                                  latest new-plist))
                           ;; No result or moved bounds: the session's
-                          ;; word has ended (a space was typed).  The old
-                          ;; table is server-filtered and answers only for
-                          ;; its own word; kept, it would feed the user's
-                          ;; fallback style (orderless) every old
-                          ;; candidate, so the session lists nothing.
+                          ;; word (the text from its start) is no longer
+                          ;; the word at point.  The old table is
+                          ;; server-filtered and answers only for its own
+                          ;; word; kept, it would feed the user's fallback
+                          ;; style (orderless) every old candidate, so the
+                          ;; session lists nothing.
                           (_ (setq table nil)))
                         ;; Recorded either way, so CAPF is not re-run on
                         ;; every call.
