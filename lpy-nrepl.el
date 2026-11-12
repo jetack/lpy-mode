@@ -1138,8 +1138,9 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; classes come from the running Emacs's Unicode tables, as the spec's own
 ;; come from the running Python's (the spec names no Unicode version), so
 ;; the two agree where their Unicode versions agree.
-;; Cost: every call copies the whole text before point (widened) into one
-;; scan buffer and normalizes its digits, linear in that text.  The lex then
+;; Cost: every call copies the text from the buffer's start (widened)
+;; through the caret's line end into one scan buffer and normalizes its
+;; digits, linear in that text.  The lex then
 ;; resumes from `lpy--word-scan-cache', the last top-level state an earlier
 ;; scan recorded before the caret's line, while the text through that
 ;; state's line end is unchanged; an edit above it re-lexes from the start.
@@ -2098,28 +2099,33 @@ fields decide the caret's context; LINE excludes its newline."
   "Return (WORD-START START END), the completion word at point, or nil.
 Buffer positions of `lpy--word-span' over the reader's line at point
 \(ended by each lineBreakChars character), the whole buffer's text
-before it deciding the context, narrowing aside; nil in a string's or
-comment's text, where no completion is offered.  The nREPL source sends
+before it deciding the context, narrowing aside, each position then
+clamped to the accessible region; nil in a string's or comment's text,
+where no completion is offered.  The nREPL source sends
 WORD-START..point, the full dotted prefix; both the eglot and nREPL
 sources complete START..END, which they must share:
 `lpy--merge-capf-results' drops a source with another start and
 `lpy--rerunning-capf' keeps a re-run only when its bounds are unchanged."
-  (save-excursion
-    (save-restriction
-      ;; The spec's text is the whole document, and its lines end at each
-      ;; lineBreakChars character (a lone CR too), never at Emacs's lines.
-      (widen)
-      (let* ((point (point))
-             (not-break (concat "^" (mapconcat (lambda (c) (string ?\\ c))
-                                               lpy--word-line-breaks "")))
-             (bol (progn (skip-chars-backward not-break) (point)))
-             (eol (progn (goto-char point) (skip-chars-forward not-break)
-                         (point)))
-             (span (lpy--word-span (buffer-substring-no-properties bol eol)
-                                   (- point bol)
-                                   (buffer-substring-no-properties
-                                    (point-min) bol))))
-        (and span (mapcar (lambda (column) (+ bol column)) span))))))
+  (let ((low (point-min)) (high (point-max)))
+    (save-excursion
+      (save-restriction
+        ;; The spec's text is the whole document, and its lines end at each
+        ;; lineBreakChars character (a lone CR too), never at Emacs's lines.
+        (widen)
+        (let* ((point (point))
+               (not-break (concat "^" (mapconcat (lambda (c) (string ?\\ c))
+                                                 lpy--word-line-breaks "")))
+               (bol (progn (skip-chars-backward not-break) (point)))
+               (eol (progn (goto-char point) (skip-chars-forward not-break)
+                           (point)))
+               (span (lpy--word-span (buffer-substring-no-properties bol eol)
+                                     (- point bol)
+                                     (buffer-substring-no-properties
+                                      (point-min) bol))))
+          ;; Clamped: callers read the bounds in the narrowed buffer.
+          (and span
+               (mapcar (lambda (column) (min high (max low (+ bol column))))
+                       span)))))))
 
 (defun lpy--completion-symbol-bounds ()
   "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.

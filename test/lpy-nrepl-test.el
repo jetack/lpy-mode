@@ -1291,6 +1291,21 @@ SENT is set to the prefix the client asked for."
     (narrow-to-region 15 (point-max))
     (should-not (lpy--completion-span))))
 
+(ert-deftest lpy-nrepl-test-word-span-stays-in-the-narrowing ()
+  ;; Defect: the span read from the widened buffer is returned as is, so
+  ;; a word starting before the narrowing hands the capfs positions
+  ;; outside it and the nREPL source's prefix read signals.
+  (with-temp-buffer
+    (insert "(foo.barbaz)")
+    (narrow-to-region 6 (point-max))
+    (goto-char 8)
+    (should (cl-every (lambda (pos) (<= (point-min) pos (point-max)))
+                      (lpy--completion-span)))
+    (let ((bounds (lpy--completion-symbol-bounds)))
+      (should (<= (point-min) (car bounds) (cdr bounds) (point-max))))
+    (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t)))
+      (should (lpy-nrepl-completion-at-point)))))
+
 (ert-deftest lpy-nrepl-test-capf-offers-nothing-in-a-string ()
   ;; Defect: in a string's text the span is nil (no word) and a source
   ;; reads bounds from it anyway, so completion signals instead of
