@@ -1202,7 +1202,8 @@ SENT is set to the prefix the client asked for."
 
 (defun lpy-nrepl-test--json (text)
   "Parse TEXT, the word-boundary spec's JSON."
-  (json-parse-string text :object-type 'alist :array-type 'list))
+  (json-parse-string text :object-type 'alist :array-type 'list
+                     :null-object nil))
 
 (defun lpy-nrepl-test--word-spec ()
   "Return the committed word-boundary spec, parsed."
@@ -1214,20 +1215,24 @@ SENT is set to the prefix the client asked for."
 (ert-deftest lpy-nrepl-test-word-span-reproduces-every-spec-case ()
   ;; Defect: the completion word disagrees with the reader's (a charset or
   ;; peel of the client's own, a Python class read as Emacs's, a lookahead
-  ;; mistranslated), so a name gets the wrong prefix or none.  The line
-  ;; sits between two others, so taking the buffer, not the line, fails.
+  ;; mistranslated, a context read from the caret's line alone), so a name
+  ;; gets the wrong prefix or none, or a string's text is completed.  The
+  ;; case's text before the line precedes it and a line follows it, so
+  ;; taking the line alone, or the text after it, fails.
   (let ((cases (alist-get 'cases (lpy-nrepl-test--word-spec)))
         (mismatches nil))
     (dolist (case cases)
       (let-alist case
         (with-temp-buffer
-          (insert "(prev line)\n")
+          (insert .before)
           (let ((bol (point)))
             (insert .text "\n(next line)")
             (goto-char (+ bol .caret))
             (let ((got (mapcar (lambda (pos) (- pos bol))
                                (lpy--completion-span)))
-                  (want (list .start .replaceStart .end)))
+                  ;; Null bounds, all three, are no word: nil.
+                  (want (and (or .start .replaceStart .end)
+                             (list .start .replaceStart .end))))
               (unless (equal got want)
                 (push (format "%S at %d: got %S, want %S" .text .caret got want)
                       mismatches)))))))
@@ -1252,6 +1257,43 @@ SENT is set to the prefix the client asked for."
                                   unless (eq field 'steps) collect field)
                          #'string<)
                    (sort (mapcar #'car lpy--word-boundary-rule) #'string<)))))
+
+(ert-deftest lpy-nrepl-test-word-span-rereads-an-edit-above ()
+  ;; Defect: the scan state `lpy--word-scan-cache' kept from an earlier
+  ;; keystroke is reused after the text above it changed, so a string
+  ;; opened or closed lines above leaves the old context in place.
+  (with-temp-buffer
+    (insert "(a b)\n(c d)\nfo")
+    (should (lpy--completion-span))
+    (goto-char (point-min))
+    (insert "\"")
+    (goto-char (point-max))
+    (should-not (lpy--completion-span))
+    (goto-char (point-min))
+    (delete-char 1)
+    (goto-char (point-max))
+    (should (lpy--completion-span))))
+
+(ert-deftest lpy-nrepl-test-capf-offers-nothing-in-a-string ()
+  ;; Defect: in a string's text the span is nil (no word) and a source
+  ;; reads bounds from it anyway, so completion signals instead of
+  ;; offering nothing, eglot is handed nil bounds, or the nREPL is asked
+  ;; for the string's text.  The string opens on the line above, so a
+  ;; context read from the caret's line alone sees a word there.
+  (require 'lpy-mode)
+  (with-temp-buffer
+    (lpy-mode)
+    (insert "(print \"first\nsec")
+    (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t))
+              ((symbol-function 'eglot-managed-p) (lambda () t))
+              ((symbol-function 'eglot-completion-at-point)
+               (lambda ()
+                 (let ((bounds (bounds-of-thing-at-point 'symbol)))
+                   (list (car bounds) (cdr bounds) '("x"))))))
+      (should (null (lpy-nrepl-completion-at-point)))
+      (should (equal (lpy--completion-symbol-bounds) (cons (point) (point))))
+      (should (equal (take 2 (lpy-completion-at-point))
+                     (list (point) (point)))))))
 
 (ert-deftest lpy-nrepl-test-declared-emacs-meets-completion-needs ()
   ;; Defect: the header lets Emacs < 30 install the package, where eglot
