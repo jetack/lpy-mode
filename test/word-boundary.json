@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "columns": "code points",
   "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode as the running Python's tables define them (\\w holds 한, \\d holds ١); a client approximates \\w and \\d with its own engine's tables",
   "rule": {
@@ -126,6 +126,11 @@
       "[",
       "{"
     ],
+    "closings": [
+      ")",
+      "]",
+      "}"
+    ],
     "metaChars": [
       "'",
       "`",
@@ -167,6 +172,107 @@
       "\"\"\"",
       "\""
     ],
+    "escapedStringOpenings": [
+      "\\\"\\\"\\\"",
+      "\\\""
+    ],
+    "rawLetter": "r",
+    "kindLetters": [
+      [
+        "t",
+        "t-string"
+      ],
+      [
+        "f",
+        "f-string"
+      ]
+    ],
+    "plainBodyStops": [
+      "\"",
+      "'",
+      "\\"
+    ],
+    "interpolatedBodyStops": [
+      "\"",
+      "'",
+      "\\",
+      "{",
+      "}"
+    ],
+    "fieldBraces": [
+      "{",
+      "}"
+    ],
+    "backslash": "\\",
+    "namedEscape": [
+      "N{",
+      "}"
+    ],
+    "quoteChars": [
+      "\"",
+      "'"
+    ],
+    "escapedQuote": "\\\"",
+    "bareQuote": "\"",
+    "lineBreakChars": [
+      "\n",
+      "\r"
+    ],
+    "whitespace": [
+      "\t",
+      "\n",
+      "\u000b",
+      "\f",
+      "\r",
+      "\u001c",
+      "\u001d",
+      "\u001e",
+      "\u001f",
+      " ",
+      "",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      " ",
+      "　"
+    ],
+    "fieldDelimiter": ":|!(?!=)",
+    "conversionEnds": [
+      ":",
+      "}"
+    ],
+    "fieldContinuation": "\\\\(?:\\r\\n|\\r|\\n|\\Z)",
+    "fieldSymbolBackslash": "\\\\(?![\"\\r\\n]|\\Z)",
+    "debugBlockers": [
+      "=",
+      "!",
+      "<",
+      ">",
+      ":",
+      "+",
+      "-",
+      "*",
+      "/",
+      "%",
+      "&",
+      "|",
+      "^",
+      "@",
+      "~"
+    ],
     "danglingQuotes": [
       "'",
       "`",
@@ -175,9 +281,17 @@
     "numberToken": "[+-]*(?:(?:(?:\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)[+-])?(?:\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)[jJ]|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d*\\.\\d+(?:_\\d+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*[eE][\\-\\+]?\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d+(?:_\\d+)*|\\d+(?:_\\d+)*\\.\\d*|\\d*\\.\\d+(?:_\\d+)*|\\d[\\dA-Za-z]*(?:_[\\dA-Za-z]+)*)",
     "signedComplex": "[+-]*(?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)[+-](?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)",
     "steps": [
-      "run: the stretch of the line around the caret holding no stopChars",
-      "lex the line, not the run alone, from the run's start, token after token, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a number (numberToken, followed by a numberEndChars character or the line's end); else a symbol (the rest of the run). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
-      "the word token: the first token that ends after the caret, or ends at it and is a symbol or number; when there is none, or it is neither a symbol nor a number, the word is empty at the caret",
+      "input: the text before the caret's line (its line breaks included), the caret's line and the caret's column; the scan reads the text before the line followed by the line, from its start, and stops at the caret: where it would read a character at or past the caret",
+      "context: lex that text over a stack of the f/t literals and fields open, in one of four modes: code (top level), field (a field's own level), bracket (inside a field's brackets), text (a string's body, a literal's or format spec's text, a conversion, a comment); the context is the mode the caret lies in. In text there is no word: start, replaceStart and end are null (an editor offers no completion there). The reader's scan is its lexer: where that lexer refuses the text before the caret (a malformed literal, field or conversion) the reader scans the caret's line alone (its start taken as top level, resume then counted from it), and takes code where it refuses that too; a client need not agree on a text the reader refuses",
+      "code, field and bracket mode: find the next token with the mode's patterns (a character no pattern matches is skipped); none, or one starting at or after the caret, stops the scan in the mode. A comment ending at or after the caret, or any other token ending after it, holds the caret: text for a comment, else the mode. In field mode a token starting with } closes the field (back to its literal's text); one starting at a fieldDelimiter match ends the expression: at : the format spec's text follows; at ! the conversion, which ends at the first conversionEnds character after the !, where field mode resumes: with none before the caret, the caret is in its text. Any other token: a string opening reads its prefix (stringPrefix) lower-cased: the first kindLetters entry whose letter it holds makes it an f/t-string, rawLetter raw; an f/t-string opening opens a literal (its quote as written) whose text is read next; a plain string reads its body (body step): text when it does not close before the caret (its closing quote ending after it, or none), else the scan goes on after its closing quote; in field or bracket mode an opening token, or a bad prefix ending in an openings entry, opens a bracket and a closing token closes one (if any is open)",
+      "text of a literal or a format spec: at or past the caret it is text; read the body (body step): a closing quote ending after the caret, or any other stop at or after it, is text; the closing quote closes the literal; a { opens a field (in a format spec, marking the spec nested); a } in a format spec closes its field",
+      "resume: where the last string or literal the scan closed ends (its closing quote's end)",
+      "body: read from the position to the next plainBodyStops character (a plain string) or interpolatedBodyStops character (an f/t-string). A backslash pairs with the character after it (raw too), except: one ending the text stands alone; in a non-raw string a backslash followed by namedEscape's opening runs through the next namedEscape close (to the text's end when none); in an f/t-string one before a fieldBraces character stands alone, the brace read next. A quoteChars character is the closing quote where the string's quote starts, else text. In an escaped string (its quote an escapedStringOpenings entry) its quote closes it, a backslash before escapedQuote is one piece with it, and a bareQuote ends the scan (the reader refuses it). A doubled brace is text where it is in the doubled set: both braces in a literal's own text, none in a format spec before its first nested field, only { after one; else it, as a single brace, ends the read",
+      "run: the stretch of the line around the caret holding no stopChars; it starts at resume instead when that lies later on the caret's line",
+      "lex the line, not the run alone, from the run's start, token after token with the context's patterns, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a closing token (a closings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a comment (; up to a lineBreakChars character); a number (numberToken, followed by a numberEndChars character or the line's end); a comma; else a symbol (the rest of the run); spaces (a run of spaces). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
+      "field and bracket patterns differ from code's: the line's end in every lookahead above is also a fieldContinuation match, and in field mode a fieldDelimiter match; a string opening also takes an escapedStringOpenings entry after stringPrefix, tried first; a bad prefix also stands before an escapedStringOpenings entry; a symbol is a run of characters, each either no stopChars character and no backslash, or a backslash matching fieldSymbolBackslash, and in field mode never one where fieldDelimiter matches, a fieldDelimiter match alone being a symbol too; in field mode a comment stops before a } or a fieldDelimiter match; spaces also take fieldContinuation matches",
+      "the word token: the first token that ends after the caret, or ends at it and is a symbol or number; when there is none, or it is neither a symbol nor a number, the word is empty at the caret. In field mode a token met there that starts at a fieldDelimiter match makes the word empty",
+      "debug =: in field mode a symbol word token ending in = whose character before the = is no debugBlockers entry, followed by only whitespace characters and backslashes ending the line, then a } or a fieldDelimiter match or the line's end, loses its =: lex again from the token's start with the line ending at the = (for every lookahead too) and take the word token of that lex; none, or one ending before the caret, is the empty word at the caret",
       "peel the word token's front, repeatedly: never a neverPeeled token; never a number token that does not start with a signs character or that matches signedComplex whole; never a token under 2 characters; else the first tokenPrefixes entry it starts with, after which the rest is a number when it matches numberToken whole and keeps its type otherwise; else a run of signs followed by a str.isalnum character or a signPeelFollowers one, the rest keeping its type; else nothing (the rest is the leaf)",
       "start: the leaf's start, or the token's when the caret is in the peeled front",
       "replaceStart: after the last . between start and the caret",
@@ -186,6 +300,7 @@
   },
   "cases": [
     {
+      "before": "",
       "text": "foo",
       "caret": 3,
       "start": 0,
@@ -193,6 +308,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "foo",
       "caret": 2,
       "start": 0,
@@ -200,6 +316,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "foo",
       "caret": 0,
       "start": 0,
@@ -207,6 +324,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "",
       "caret": 0,
       "start": 0,
@@ -214,6 +332,7 @@
       "end": 0
     },
     {
+      "before": "",
       "text": "x",
       "caret": 0,
       "start": 0,
@@ -221,6 +340,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "x1",
       "caret": 2,
       "start": 0,
@@ -228,6 +348,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "ok?",
       "caret": 3,
       "start": 0,
@@ -235,6 +356,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "swap!",
       "caret": 5,
       "start": 0,
@@ -242,6 +364,7 @@
       "end": 5
     },
     {
+      "before": "",
       "text": "(swap!",
       "caret": 6,
       "start": 1,
@@ -249,6 +372,7 @@
       "end": 6
     },
     {
+      "before": "",
       "text": "->f",
       "caret": 3,
       "start": 0,
@@ -256,6 +380,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "(->>",
       "caret": 4,
       "start": 1,
@@ -263,6 +388,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "(++",
       "caret": 3,
       "start": 1,
@@ -270,6 +396,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "(--",
       "caret": 3,
       "start": 1,
@@ -277,6 +404,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "as->",
       "caret": 4,
       "start": 0,
@@ -284,6 +412,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "a~b",
       "caret": 3,
       "start": 0,
@@ -291,6 +420,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a@b",
       "caret": 3,
       "start": 0,
@@ -298,6 +428,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a<b",
       "caret": 3,
       "start": 0,
@@ -305,6 +436,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a(b",
       "caret": 3,
       "start": 0,
@@ -312,6 +444,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a'b",
       "caret": 3,
       "start": 0,
@@ -319,6 +452,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "except*",
       "caret": 7,
       "start": 0,
@@ -326,6 +460,7 @@
       "end": 7
     },
     {
+      "before": "",
       "text": "!=",
       "caret": 2,
       "start": 0,
@@ -333,6 +468,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "-fo",
       "caret": 3,
       "start": 1,
@@ -340,6 +476,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "--x",
       "caret": 3,
       "start": 2,
@@ -347,6 +484,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "(- -fo",
       "caret": 6,
       "start": 4,
@@ -354,6 +492,7 @@
       "end": 6
     },
     {
+      "before": "",
       "text": "-.x",
       "caret": 3,
       "start": 1,
@@ -361,6 +500,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "-_a",
       "caret": 3,
       "start": 1,
@@ -368,6 +508,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "-́x",
       "caret": 3,
       "start": 0,
@@ -375,6 +516,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "-²",
       "caret": 2,
       "start": 1,
@@ -382,6 +524,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "-1",
       "caret": 2,
       "start": 1,
@@ -389,6 +532,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "-foo",
       "caret": 1,
       "start": 1,
@@ -396,6 +540,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "--x",
       "caret": 1,
       "start": 0,
@@ -403,6 +548,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "**x",
       "caret": 1,
       "start": 0,
@@ -410,6 +556,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "-",
       "caret": 1,
       "start": 0,
@@ -417,6 +564,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "--",
       "caret": 2,
       "start": 0,
@@ -424,6 +572,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "(-",
       "caret": 2,
       "start": 1,
@@ -431,6 +580,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "(-)",
       "caret": 2,
       "start": 1,
@@ -438,6 +588,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "-->x",
       "caret": 4,
       "start": 0,
@@ -445,6 +596,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "-?",
       "caret": 2,
       "start": 0,
@@ -452,6 +604,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": ":kw",
       "caret": 3,
       "start": 1,
@@ -459,6 +612,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "::x",
       "caret": 3,
       "start": 2,
@@ -466,6 +620,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "^x",
       "caret": 2,
       "start": 1,
@@ -473,6 +628,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "*x",
       "caret": 2,
       "start": 1,
@@ -480,6 +636,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "**x",
       "caret": 3,
       "start": 2,
@@ -487,6 +644,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "^*x",
       "caret": 3,
       "start": 2,
@@ -494,6 +652,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "**=",
       "caret": 3,
       "start": 0,
@@ -501,6 +660,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "^**=",
       "caret": 4,
       "start": 1,
@@ -508,6 +668,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "+=",
       "caret": 2,
       "start": 0,
@@ -515,6 +676,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "-=",
       "caret": 2,
       "start": 0,
@@ -522,6 +684,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "'x",
       "caret": 2,
       "start": 1,
@@ -529,6 +692,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "`x",
       "caret": 2,
       "start": 1,
@@ -536,6 +700,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "~x",
       "caret": 2,
       "start": 1,
@@ -543,6 +708,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "~@x",
       "caret": 3,
       "start": 2,
@@ -550,6 +716,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "^'x",
       "caret": 3,
       "start": 2,
@@ -557,6 +724,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "'x",
       "caret": 1,
       "start": 1,
@@ -564,6 +732,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "~",
       "caret": 1,
       "start": 0,
@@ -571,6 +740,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "~@x",
       "caret": 1,
       "start": 1,
@@ -578,6 +748,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "(",
       "caret": 1,
       "start": 1,
@@ -585,6 +756,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "{x",
       "caret": 2,
       "start": 1,
@@ -592,6 +764,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "[x",
       "caret": 2,
       "start": 1,
@@ -599,6 +772,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": ",x",
       "caret": 2,
       "start": 1,
@@ -606,6 +780,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "#x",
       "caret": 2,
       "start": 0,
@@ -613,13 +788,15 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "x'''",
       "caret": 4,
-      "start": 4,
-      "replaceStart": 4,
-      "end": 4
+      "start": null,
+      "replaceStart": null,
+      "end": null
     },
     {
+      "before": "",
       "text": "*[1 2]",
       "caret": 1,
       "start": 1,
@@ -627,6 +804,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a\"",
       "caret": 1,
       "start": 1,
@@ -634,6 +812,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "f\"x\"",
       "caret": 1,
       "start": 1,
@@ -641,6 +820,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "-1+2j",
       "caret": 5,
       "start": 0,
@@ -648,6 +828,7 @@
       "end": 5
     },
     {
+      "before": "",
       "text": ":-1+2j",
       "caret": 6,
       "start": 1,
@@ -655,6 +836,7 @@
       "end": 6
     },
     {
+      "before": "",
       "text": "한\"",
       "caret": 1,
       "start": 1,
@@ -662,6 +844,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "heapq.nl",
       "caret": 8,
       "start": 0,
@@ -669,6 +852,7 @@
       "end": 8
     },
     {
+      "before": "",
       "text": "heapq.",
       "caret": 6,
       "start": 0,
@@ -676,6 +860,7 @@
       "end": 6
     },
     {
+      "before": "",
       "text": "a.b.c",
       "caret": 3,
       "start": 0,
@@ -683,6 +868,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a..b",
       "caret": 4,
       "start": 0,
@@ -690,6 +876,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "x.",
       "caret": 2,
       "start": 0,
@@ -697,6 +884,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": ".method",
       "caret": 7,
       "start": 0,
@@ -704,6 +892,7 @@
       "end": 7
     },
     {
+      "before": "",
       "text": "(.c",
       "caret": 3,
       "start": 1,
@@ -711,6 +900,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "x .c",
       "caret": 4,
       "start": 2,
@@ -718,6 +908,7 @@
       "end": 4
     },
     {
+      "before": "",
       "text": "1.5",
       "caret": 3,
       "start": 0,
@@ -725,6 +916,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "(foo bar)",
       "caret": 8,
       "start": 5,
@@ -732,13 +924,15 @@
       "end": 8
     },
     {
+      "before": "",
       "text": "\"ab\"",
       "caret": 3,
-      "start": 3,
-      "replaceStart": 3,
-      "end": 3
+      "start": null,
+      "replaceStart": null,
+      "end": null
     },
     {
+      "before": "",
       "text": "a\u001cb",
       "caret": 3,
       "start": 2,
@@ -746,6 +940,359 @@
       "end": 3
     },
     {
+      "before": "",
+      "text": "; ab",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{{ab\"",
+      "caret": 6,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{x:>10}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r}\"",
+      "caret": 5,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x:>10}\"",
+      "caret": 7,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x=}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{x =}\"",
+      "caret": 6,
+      "start": 6,
+      "replaceStart": 6,
+      "end": 6
+    },
+    {
+      "before": "",
+      "text": "f\"{x=}\"",
+      "caret": 5,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 5
+    },
+    {
+      "before": "",
+      "text": "f\"{x==y}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 7
+    },
+    {
+      "before": "",
+      "text": "f\"{x!=y}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 7
+    },
+    {
+      "before": "",
+      "text": "t\"{x!r}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"\"\"{x:>4}\"\"\"",
+      "caret": 6,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 6
+    },
+    {
+      "before": "",
+      "text": "f\"{(a:b)}\"",
+      "caret": 5,
+      "start": 4,
+      "replaceStart": 4,
+      "end": 7
+    },
+    {
+      "before": "",
+      "text": "{x:y}",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{x:{wi}}\"",
+      "caret": 8,
+      "start": 6,
+      "replaceStart": 6,
+      "end": 8
+    },
+    {
+      "before": "",
+      "text": "rf\"\\N{ab}\"",
+      "caret": 8,
+      "start": 6,
+      "replaceStart": 6,
+      "end": 8
+    },
+    {
+      "before": "",
+      "text": "f\"\\N{ab}\"",
+      "caret": 7,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{\"a\"}{b}\"",
+      "caret": 9,
+      "start": 8,
+      "replaceStart": 8,
+      "end": 9
+    },
+    {
+      "before": "",
+      "text": "'''ab'''",
+      "caret": 5,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "'''a'''b",
+      "caret": 8,
+      "start": 7,
+      "replaceStart": 7,
+      "end": 8
+    },
+    {
+      "before": "",
+      "text": "f\"{\\\"a\\\" b}\"",
+      "caret": 10,
+      "start": 9,
+      "replaceStart": 9,
+      "end": 10
+    },
+    {
+      "before": "",
+      "text": "(f '''a-b''')",
+      "caret": 12,
+      "start": 12,
+      "replaceStart": 12,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "'''x:'''",
+      "caret": 8,
+      "start": 8,
+      "replaceStart": 8,
+      "end": 8
+    },
+    {
+      "before": "",
+      "text": "f\"{'''a-b'''}\"",
+      "caret": 12,
+      "start": 12,
+      "replaceStart": 12,
+      "end": 12
+    },
+    {
+      "before": "f\"\"\"\n",
+      "text": "  Name: {name!r}",
+      "caret": 13,
+      "start": 9,
+      "replaceStart": 9,
+      "end": 13
+    },
+    {
+      "before": "f\"\"\"\n",
+      "text": "  Width: {w:>10}",
+      "caret": 11,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 11
+    },
+    {
+      "before": "f\"\"\"\n",
+      "text": "  {x=}",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "f\"\"\"\n",
+      "text": "  text {x}",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "(print \"doc\n",
+      "text": "end.\" (foo))",
+      "caret": 9,
+      "start": 7,
+      "replaceStart": 7,
+      "end": 10
+    },
+    {
+      "before": "\"a\n",
+      "text": "b\"",
+      "caret": 1,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "; c\n",
+      "text": "fo",
+      "caret": 2,
+      "start": 0,
+      "replaceStart": 0,
+      "end": 2
+    },
+    {
+      "before": "",
+      "text": "(print \"ab",
+      "caret": 10,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r}",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{a\\=}\"",
+      "caret": 5,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 5
+    },
+    {
+      "before": "",
+      "text": "f\"\"\"{x=",
+      "caret": 6,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 6
+    },
+    {
+      "before": "",
+      "text": "f\"\"\"{x= ",
+      "caret": 6,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 6
+    },
+    {
+      "before": "",
+      "text": "f\"{x=\\",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "f\"}\"\n",
+      "text": "f\"{x!r}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "f\"{x!}\"\n",
+      "text": "(print \"abc\")",
+      "caret": 10,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "x = f\"{a:\n}\"\n",
+      "text": "\"abc\"",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{!\"\"\":\"",
+      "caret": 9,
+      "start": 9,
+      "replaceStart": 9,
+      "end": 9
+    },
+    {
+      "before": "",
+      "text": "f\"{\\=}\"",
+      "caret": 4,
+      "start": 4,
+      "replaceStart": 4,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{\\=}\"",
+      "caret": 5,
+      "start": 5,
+      "replaceStart": 5,
+      "end": 5
+    },
+    {
+      "before": "",
       "text": "f\"{1:{wi",
       "caret": 8,
       "start": 6,
@@ -753,6 +1300,7 @@
       "end": 8
     },
     {
+      "before": "",
       "text": "f\"{x:>{wi}}\"",
       "caret": 9,
       "start": 7,
@@ -760,6 +1308,7 @@
       "end": 9
     },
     {
+      "before": "",
       "text": "f\"ab{wi",
       "caret": 7,
       "start": 5,
@@ -767,6 +1316,7 @@
       "end": 7
     },
     {
+      "before": "",
       "text": "f\"{a}b{c}\"",
       "caret": 8,
       "start": 7,
@@ -774,6 +1324,7 @@
       "end": 8
     },
     {
+      "before": "",
       "text": "a{b",
       "caret": 3,
       "start": 2,
@@ -781,6 +1332,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a{b",
       "caret": 1,
       "start": 0,
@@ -788,6 +1340,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "1{x",
       "caret": 1,
       "start": 0,
@@ -795,6 +1348,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "-1+2j{x",
       "caret": 5,
       "start": 0,
@@ -802,6 +1356,7 @@
       "end": 5
     },
     {
+      "before": "",
       "text": "1{x",
       "caret": 3,
       "start": 2,
@@ -809,13 +1364,15 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a;b",
       "caret": 3,
-      "start": 2,
-      "replaceStart": 2,
-      "end": 3
+      "start": null,
+      "replaceStart": null,
+      "end": null
     },
     {
+      "before": "",
       "text": "a;b",
       "caret": 1,
       "start": 0,
@@ -823,6 +1380,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a]b",
       "caret": 3,
       "start": 2,
@@ -830,6 +1388,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a]b",
       "caret": 1,
       "start": 0,
@@ -837,6 +1396,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a}b",
       "caret": 3,
       "start": 2,
@@ -844,6 +1404,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a}b",
       "caret": 1,
       "start": 0,
@@ -851,6 +1412,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a)b",
       "caret": 3,
       "start": 2,
@@ -858,6 +1420,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a)b",
       "caret": 1,
       "start": 0,
@@ -865,6 +1428,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a,b",
       "caret": 3,
       "start": 2,
@@ -872,6 +1436,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a,b",
       "caret": 1,
       "start": 0,
@@ -879,6 +1444,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a b",
       "caret": 3,
       "start": 2,
@@ -886,6 +1452,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a b",
       "caret": 1,
       "start": 0,
@@ -893,6 +1460,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "a　b",
       "caret": 3,
       "start": 2,
@@ -900,6 +1468,7 @@
       "end": 3
     },
     {
+      "before": "",
       "text": "a　b",
       "caret": 1,
       "start": 0,
@@ -907,6 +1476,7 @@
       "end": 1
     },
     {
+      "before": "",
       "text": "한국",
       "caret": 2,
       "start": 0,
@@ -914,6 +1484,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "x한",
       "caret": 2,
       "start": 0,
@@ -921,6 +1492,7 @@
       "end": 2
     },
     {
+      "before": "",
       "text": "𝑥y",
       "caret": 2,
       "start": 0,
