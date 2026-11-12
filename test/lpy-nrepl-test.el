@@ -1286,8 +1286,9 @@ SENT is set to the prefix the client asked for."
 (ert-deftest lpy-nrepl-test-word-span-none-after-a-refused-conversion ()
   ;; Defect: a conversion is read as anything up to its end character, so
   ;; a text the reader refuses (an unknown name, none, or other text after
-  ;; it) is completed on the next line, where the spec asks no client to
-  ;; agree.
+  ;; it) is accepted and a word is offered on the next line, past the
+  ;; refused text, where this client offers none, as lispython's reference
+  ;; interpreter (`spec_word_span') does.
   (dolist (text '("f\"{x!z}\"" "f\"{x!}\"" "f\"{x!r(}\""))
     (with-temp-buffer
       (insert text "\nfo")
@@ -1305,7 +1306,8 @@ SENT is set to the prefix the client asked for."
 
 (ert-deftest lpy-nrepl-test-word-span-none-after-a-refused-text ()
   ;; Defect: a refused text falls back to reading the caret's line alone,
-  ;; so a word is offered where the spec asks no client to agree.
+  ;; so a word is offered past the refused text, where this client offers
+  ;; none, as lispython's reference interpreter (`spec_word_span') does.
   (with-temp-buffer
     (insert "f\"}\"\nfo")
     (should-not (lpy--completion-span))))
