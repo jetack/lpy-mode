@@ -1133,8 +1133,8 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; caret), the body step `lpy--word-body', each mode's token patterns
 ;; `lpy--word-token-kinds', and the run, word token, debug = and peel steps
 ;; `lpy--word-span'.  In a string's or comment's text there is no word,
-;; nor where the reader refuses the text before the caret (the spec has no
-;; answer there).
+;; nor where the reader refuses the text before the caret: it recovers past
+;; the error, but the spec asks no client to agree there.
 ;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
 ;; Python's definition, and the buffer may be in another mode.  The `\w'/Nd
 ;; classes come from the running Emacs's Unicode tables, as the spec's own
@@ -2055,7 +2055,8 @@ and starts the one after it, so no position needs the pair.")
   "Return (MODE . RESUME) of the caret at column CARET of the line at BOL.
 The scan buffer holds BEFORE, the text before the line, and the line.
 RESUME is a column of the line.  Nil where the reader refuses the text
-before the caret: the spec has no answer there.  Starts from
+before the caret: it recovers past the error, but the spec asks no
+client to agree there.  Starts from
 `lpy--word-scan-cache' when it holds, and updates it (a state recorded
 before a refusal is still a valid top-level state)."
   (let* ((cache lpy--word-scan-cache)
@@ -2086,9 +2087,10 @@ REPLACE-START is after its last dot before the caret, where a candidate
 replaces, and END is the word's end, before the next dot.  All three are
 CARET when the word is empty, and the result is nil, where no completion
 is offered, in a string's or comment's text and where the reader refuses
-the text before the caret (the spec has no answer there).  BEFORE is the text
-before LINE (its line breaks included), whose strings, comments and
-fields decide the caret's context; LINE excludes its newline."
+the text before the caret (it recovers past the error, but the spec asks
+no client to agree there).  BEFORE is the text before LINE (its line
+breaks included), whose strings, comments and fields decide the caret's
+context; LINE excludes its newline."
   (with-current-buffer (get-buffer-create " *lpy-word-scan*")
     (let ((case-fold-search nil)
           (inhibit-modification-hooks t))
