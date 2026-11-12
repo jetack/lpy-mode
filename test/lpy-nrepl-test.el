@@ -1311,6 +1311,23 @@ SENT is set to the prefix the client asked for."
     (insert "xx\nfo")
     (should-not (lpy--completion-span))))
 
+(ert-deftest lpy-nrepl-test-word-span-cache-rereads-a-bare-quote-below ()
+  ;; Defect: a bareQuote refusal rewinds the scan to the escaped literal's
+  ;; or string's body start, but its body read went on to the bareQuote a
+  ;; line below; a state recorded past the rewind is reused once that line
+  ;; changed, and reads code where a fresh scan reads a string's text
+  ;; (`completion_word_span' gives None for "foo" after either first line
+  ;; and "\"\n" or "x\n").
+  (dolist (first '("f\"{f\\\"a\\\\\"\n" "f\"{\\\"a\\\\\"\n"))
+    (with-temp-buffer
+      (insert first "\"\nfoo")
+      (should (equal (cons first (lpy--completion-span)) (list first)))
+      (goto-char (1+ (length first)))
+      (delete-char 1)
+      (insert "x")
+      (goto-char (point-max))
+      (should (equal (cons first (lpy--completion-span)) (list first))))))
+
 (ert-deftest lpy-nrepl-test-word-span-reads-past-a-blank-conversion ()
   ;; Defect: the blanks after a conversion's name are whitespace alone,
   ;; so a continuation (or a non-ASCII whitespace) before the end
