@@ -1274,6 +1274,23 @@ SENT is set to the prefix the client asked for."
     (goto-char (point-max))
     (should (lpy--completion-span))))
 
+(ert-deftest lpy-nrepl-test-word-span-line-ends-at-a-lone-cr ()
+  ;; Defect: the line is Emacs's (LF only), so after a lone CR, a line
+  ;; break to the reader, the caret's line still holds the text before
+  ;; it and the debug `=' of a new line is read as the field's.
+  (with-temp-buffer
+    (insert "f\"{x\r=}\"")
+    (goto-char 6)
+    (should (equal (lpy--completion-span) '(6 6 7)))))
+
+(ert-deftest lpy-nrepl-test-word-span-reads-past-narrowing ()
+  ;; Defect: the context is read from `point-min', so narrowing to a
+  ;; region that starts inside a multi-line string makes its text code.
+  (with-temp-buffer
+    (insert "(print \"first\nsecond fo")
+    (narrow-to-region 15 (point-max))
+    (should-not (lpy--completion-span))))
+
 (ert-deftest lpy-nrepl-test-capf-offers-nothing-in-a-string ()
   ;; Defect: in a string's text the span is nil (no word) and a source
   ;; reads bounds from it anyway, so completion signals instead of

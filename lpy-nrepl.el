@@ -1138,11 +1138,11 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; classes come from the running Emacs's Unicode tables, as the spec's own
 ;; come from the running Python's (the spec names no Unicode version), so
 ;; the two agree where their Unicode versions agree.
-;; Cost: every call copies the text before point into one scan buffer and
-;; lexes it from the start, token by token (no per-token copy), so a
-;; keystroke costs time linear in the text before point.  The lexer is the
-;; reader's: no cache of an earlier scan is kept, since an edit anywhere
-;; above may open or close a string.
+;; Cost: every call copies the whole text before point (widened) into one
+;; scan buffer and normalizes its digits, linear in that text.  The lex then
+;; resumes from `lpy--word-scan-cache', the last top-level state an earlier
+;; scan recorded before the caret's line, while the text through that
+;; state's line end is unchanged; an edit above it re-lexes from the start.
 
 (defconst lpy--word-boundary-rule
   '((stopChars . ("\u0009" "\u000a" "\u000b" "\u000c" "\u000d" "\u001c"
@@ -1999,14 +1999,24 @@ BEFORE is the text before that scan's line, POS and RESUME a state
 BEFORE's prefix the state depends on, through POS's line end.  A scan
 whose text agrees with BEFORE that far starts there, so typing on a line
 does not re-lex the text above it.  Sound because at the top level no
-token and no pattern reads past a newline (a stop and line-break
-character, `lpy--word-newline-ends-top-level-tokens'): a state is
-decided by the text through its line's end.")
+token and no pattern reads past a line break (each a stop character,
+`lpy--word-line-breaks-end-top-level-tokens'): a state is decided by the
+text through its line's end.")
 
-(defconst lpy--word-newline-ends-top-level-tokens
-  (or (and (memq ?\n lpy--word-stop-chars)
-           (memq ?\n (lpy--word-rule-chars 'lineBreakChars)))
-      (error "A newline is no word-boundary stop: `lpy--word-scan-cache' is unsound"))
+(defconst lpy--word-line-breaks (lpy--word-rule-chars 'lineBreakChars)
+  "The characters that end a line, as the reader splits lines.
+A CR LF pair is one break, but either character ends the line before it
+and starts the one after it, so no position needs the pair.")
+
+(defconst lpy--word-line-break-regexp
+  (lpy--word-char-class lpy--word-line-breaks)
+  "Matches a line-break character.")
+
+(defconst lpy--word-line-breaks-end-top-level-tokens
+  (or (and lpy--word-line-breaks
+           (cl-every (lambda (c) (memq c lpy--word-stop-chars))
+                     lpy--word-line-breaks))
+      (error "A line break is no word-boundary stop: `lpy--word-scan-cache' is unsound"))
   "Non-nil: the spec keeps what `lpy--word-scan-cache' relies on.")
 
 (defun lpy--word-line-context (before bol caret)
@@ -2027,7 +2037,10 @@ it holds, and updates it."
             (cons before
                   (cons (save-excursion
                           (goto-char (car state))
-                          (1- (if (search-forward "\n" bol t) (point) bol)))
+                          (1- (if (re-search-forward
+                                   lpy--word-line-break-regexp bol t)
+                                  (point)
+                                bol)))
                         state))))
     (if found
         (cons (car found) (max (- (cdr found) bol) 0))
@@ -2083,20 +2096,30 @@ fields decide the caret's context; LINE excludes its newline."
 
 (defun lpy--completion-span ()
   "Return (WORD-START START END), the completion word at point, or nil.
-Buffer positions of `lpy--word-span' over the current line, the text
-from `point-min' before it deciding the context; nil in a string's or
+Buffer positions of `lpy--word-span' over the reader's line at point
+\(ended by each lineBreakChars character), the whole buffer's text
+before it deciding the context, narrowing aside; nil in a string's or
 comment's text, where no completion is offered.  The nREPL source sends
 WORD-START..point, the full dotted prefix; both the eglot and nREPL
 sources complete START..END, which they must share:
 `lpy--merge-capf-results' drops a source with another start and
 `lpy--rerunning-capf' keeps a re-run only when its bounds are unchanged."
-  (let* ((bol (line-beginning-position))
-         (span (lpy--word-span (buffer-substring-no-properties
-                                bol (line-end-position))
-                               (- (point) bol)
-                               (buffer-substring-no-properties
-                                (point-min) bol))))
-    (and span (mapcar (lambda (column) (+ bol column)) span))))
+  (save-excursion
+    (save-restriction
+      ;; The spec's text is the whole document, and its lines end at each
+      ;; lineBreakChars character (a lone CR too), never at Emacs's lines.
+      (widen)
+      (let* ((point (point))
+             (not-break (concat "^" (mapconcat (lambda (c) (string ?\\ c))
+                                               lpy--word-line-breaks "")))
+             (bol (progn (skip-chars-backward not-break) (point)))
+             (eol (progn (goto-char point) (skip-chars-forward not-break)
+                         (point)))
+             (span (lpy--word-span (buffer-substring-no-properties bol eol)
+                                   (- point bol)
+                                   (buffer-substring-no-properties
+                                    (point-min) bol))))
+        (and span (mapcar (lambda (column) (+ bol column)) span))))))
 
 (defun lpy--completion-symbol-bounds ()
   "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.
