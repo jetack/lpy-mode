@@ -2099,9 +2099,10 @@ fields decide the caret's context; LINE excludes its newline."
   "Return (WORD-START START END), the completion word at point, or nil.
 Buffer positions of `lpy--word-span' over the reader's line at point
 \(ended by each lineBreakChars character), the whole buffer's text
-before it deciding the context, narrowing aside, each position then
-clamped to the accessible region; nil in a string's or comment's text,
-where no completion is offered.  The nREPL source sends
+before it deciding the context, narrowing aside.  Nil in a string's or
+comment's text, where no completion is offered, and when a position
+falls outside the accessible region: a word the narrowing cuts cannot
+be completed from inside it.  The nREPL source sends
 WORD-START..point, the full dotted prefix; both the eglot and nREPL
 sources complete START..END, which they must share:
 `lpy--merge-capf-results' drops a source with another start and
@@ -2122,10 +2123,12 @@ sources complete START..END, which they must share:
                                      (- point bol)
                                      (buffer-substring-no-properties
                                       (point-min) bol))))
-          ;; Clamped: callers read the bounds in the narrowed buffer.
-          (and span
-               (mapcar (lambda (column) (min high (max low (+ bol column))))
-                       span)))))))
+          ;; Callers read the bounds in the narrowed buffer, and a word
+          ;; cut by the narrowing has no prefix there that names it.
+          (let ((positions (mapcar (lambda (column) (+ bol column)) span)))
+            (and positions
+                 (cl-every (lambda (pos) (<= low pos high)) positions)
+                 positions)))))))
 
 (defun lpy--completion-symbol-bounds ()
   "Return the (START . END) eglot completes, for `bounds-of-thing-at-point'.
