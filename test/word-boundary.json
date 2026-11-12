@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "columns": "code points",
   "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode as the running Python's tables define them (\\w holds 한, \\d holds ١); a client approximates \\w and \\d with its own engine's tables",
   "rule": {
@@ -255,6 +255,22 @@
       "r",
       "s"
     ],
+    "plainStringPrefixes": [
+      "",
+      "r",
+      "u",
+      "b",
+      "br",
+      "rb"
+    ],
+    "interpolatedStringPrefixes": [
+      "f",
+      "rf",
+      "fr",
+      "t",
+      "rt",
+      "tr"
+    ],
     "conversionEnds": [
       ":",
       "}"
@@ -287,11 +303,12 @@
     "signedComplex": "[+-]*(?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)[+-](?:([0-9](?:_?[0-9])*[jJ]|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)[jJ])|(([0-9](?:_?[0-9])*\\.(?:[0-9](?:_?[0-9])*)?|\\.[0-9](?:_?[0-9])*)([eE][-+]?[0-9](?:_?[0-9])*)?|[0-9](?:_?[0-9])*[eE][-+]?[0-9](?:_?[0-9])*)|0[xX](?:_?[0-9a-fA-F])+|0[bB](?:_?[01])+|0[oO](?:_?[0-7])+|[0-9](?:_?[0-9])*)",
     "steps": [
       "input: the text before the caret's line (its line breaks included), the caret's line and the caret's column; the scan reads the text before the line followed by the line, from its start, and stops at the caret: where it would read a character at or past the caret",
-      "context: lex that text over a stack of the f/t literals and fields open, in one of four modes: code (top level), field (a field's own level), bracket (inside a field's brackets), text (a string's body, a literal's or format spec's text, a conversion, a comment); the context is the mode the caret lies in. In text there is no word: start, replaceStart and end are null (an editor offers no completion there). The reader's scan is its lexer: where that lexer refuses the text before the caret (a malformed literal, field or conversion) the reader resumes just after the error, in the innermost f/t literal open there (top level when none, resume then the error's end at the earliest), repeating on each further error until it reaches the caret (an error not ending past where its scan resumed also drops the innermost literal kept); the cases hold no such text, and a client need not agree on a text the reader refuses",
-      "code, field and bracket mode: find the next token with the mode's patterns (a character no pattern matches is skipped); none, or one starting at or after the caret, stops the scan in the mode. A comment ending at or after the caret, or any other token ending after it, holds the caret: text for a comment, else the mode. In field mode a token starting with } closes the field (back to its literal's text); one starting at a fieldDelimiter match ends the expression: at : the format spec's text follows; at ! the conversion, which ends at the first conversionEnds character after the !, where field mode resumes: with none before the caret, the caret is in its text; else the conversion is the name right after the ! (characters str.isalnum holds, or _), then only blanks (whitespace characters and fieldContinuation matches) up to that character: a name not in conversionNames (an empty one included), or anything else there, is a refusal of the text, so the check decides where the reading goes on: a valid conversion resumes field mode at that character, while past a refusal the reader recovers (context step) in the field's literal, never in the field. Any other token: a string opening reads its prefix (stringPrefix) lower-cased: the first kindLetters entry whose letter it holds makes it an f/t-string, rawLetter raw; an f/t-string opening opens a literal (its quote as written) whose text is read next; a plain string reads its body (body step): text when it does not close before the caret (its closing quote ending after it, or none), else the scan goes on after its closing quote; in field or bracket mode an opening token, or a bad prefix ending in an openings entry, opens a bracket and a closing token closes one (if any is open)",
-      "text of a literal or a format spec: at or past the caret it is text; read the body (body step): a closing quote ending after the caret, or any other stop at or after it, is text; the closing quote closes the literal; a { opens a field (in a format spec, marking the spec nested); a } in a format spec closes its field",
-      "resume: where the last string or literal the scan closed ends (its closing quote's end)",
-      "body: read from the position to the next plainBodyStops character (a plain string) or interpolatedBodyStops character (an f/t-string). A backslash pairs with the character after it (raw too), except: one ending the text stands alone; in a non-raw string a backslash followed by namedEscape's opening runs through the next namedEscape close (to the text's end when none); in an f/t-string one before a fieldBraces character stands alone, the brace read next. A quoteChars character is the closing quote where the string's quote starts, else text. In an escaped string (its quote an escapedStringOpenings entry) its quote closes it, a backslash before escapedQuote is one piece with it, and a bareQuote ends the scan (the reader refuses it). A doubled brace is text where it is in the doubled set: both braces in a literal's own text, none in a format spec before its first nested field, only { after one; else it, as a single brace, ends the read",
+      "context: lex that text over a stack of the f/t literals and fields open, in one of four modes: code (top level), field (a field's own level), bracket (inside a field's brackets), text (a string's body, a literal's or format spec's text, a conversion, a comment); the context is the mode the caret lies in. In text there is no word: start, replaceStart and end are null (an editor offers no completion there). The reader's scan is its lexer, which refuses some texts (refusals step); past a refusal the scan goes on in place: the stack keeps its entries up to its innermost literal (the fields above it are dropped; a bareQuote refusal of an escaped literal drops that literal too, with the fields above the next one), and the scan resumes in that literal's text at the refusal's end, or where it last resumed when that is later",
+      "code, field and bracket mode: find the next token with the mode's patterns (a character no pattern matches is skipped); none, or one starting at or after the caret, stops the scan in the mode. A comment ending at or after the caret, or any other token ending after it, holds the caret: text for a comment, else the mode. In field mode a token starting with } closes the field (back to its literal's text); one starting at a fieldDelimiter match ends the expression: at : the format spec's text follows; at ! the conversion, which ends at the first conversionEnds character after the !: with none before the caret, the caret is in its text. Else its name is the characters str.isalnum holds, or _, right after the !, and blanks are whitespace characters and fieldContinuation matches. With no name, a name character after the blanks is a refusal (span: the !); anything else there is refused (span: its first character), a string opening there read first (conversion string). A name followed directly by a stringOpenings or escapedStringOpenings entry is that string's prefix when, lower-cased, it is a plainStringPrefixes entry (that string is read, conversion string) or an interpolatedStringPrefixes entry (not read): then the name is refused (span: its first character). Any other name not in conversionNames is refused (span: the name). Else past the name's blanks the conversionEnds character resumes field mode, and anything else is refused (span: its first character). A conversion string is a plain string read by the body step (raw when its lower-cased name holds rawLetter): its own refusal comes first, and one that closes before the caret is the last string closed (resume step). Any other token: a string opening reads its prefix (stringPrefix) lower-cased: the first kindLetters entry whose letter it holds makes it an f/t-string, rawLetter raw; an f/t-string opening opens a literal (its quote as written) whose text is read next; a plain string reads its body (body step): text when it does not close before the caret (its closing quote ending after it, or none), else the scan goes on after its closing quote; in field or bracket mode an opening token, or a bad prefix ending in an openings entry, opens a bracket and a closing token closes one (if any is open)",
+      "text of a literal or a format spec: at or past the caret it is text; read the body (body step): a closing quote ending after the caret, or any other stop at or after it, is text; the closing quote closes the literal (in a format spec it is refused); a { opens a field (in a format spec, marking the spec nested); a } in a format spec closes its field (in a literal's own text it is refused)",
+      "refusals, each with its span (from its start to its end), met only before the caret: in field mode a token starting with = but not == that is the field's first token (spaces, commas and comments aside): the =, even when that token holds the caret; a single } in a literal's own text: the }; in a format spec's text of a literal whose quote less its backslashes is one character, a line break (\\r\\n is one) not after an odd run of backslashes in the text read, before the caret: the break's first character, refused before the text step reads on; the literal's closing quote in a format spec's text: that quote as written; a bareQuote ending an escaped string's or literal's body: the string's opening quote (its escapedStringOpenings entry); and the conversion's (code, field and bracket mode step). The reader refuses no other text before the caret: an unclosed string or literal is text, since the text's end lies past the caret",
+      "resume: where the last string or literal the scan closed ends (its closing quote's end), or where the scan last resumed past a refusal, whichever is later",
+      "body: read from the position to the next plainBodyStops character (a plain string) or interpolatedBodyStops character (an f/t-string). A backslash pairs with the character after it (raw too), except: one ending the text stands alone; in a non-raw string a backslash followed by namedEscape's opening runs through the next namedEscape close (to the text's end when none); in an f/t-string one before a fieldBraces character stands alone, the brace read next. A quoteChars character is the closing quote where the string's quote starts, else text. In an escaped string (its quote an escapedStringOpenings entry) its quote closes it, a backslash before escapedQuote is one piece with it, and a bareQuote ends the scan (a refusal). A doubled brace is text where it is in the doubled set: both braces in a literal's own text, none in a format spec before its first nested field, only { after one; else it, as a single brace, ends the read",
       "run: the stretch of the line around the caret holding no stopChars; it starts at resume instead when that lies later on the caret's line",
       "lex the line, not the run alone, from the run's start, token after token with the context's patterns, until a token reaches or passes the run's end; at each token start try, in this order: an opening token (a wrappers entry + an openings entry); a closing token (a closings entry); a string opening (stringPrefix + a stringOpenings entry); a dangling quote (a wrappers entry + a danglingQuotes entry, followed by a formEndChars character or the line's end); a meta-indicator (a wrappers entry + a metaChars entry, followed by anything but a formEndChars character or the line's end); a bad prefix (^ + one or more *, then an openings entry, a metaChars entry, or before a stopChars character or the line's end); a comment (; up to a lineBreakChars character); a number (numberToken, followed by a numberEndChars character or the line's end); a comma; else a symbol (the rest of the run); spaces (a run of spaces). Entries are tried longest first. ~ is a metaChars entry and no danglingQuotes one: a ~ followed by a formEndChars character or the line's end matches none of these patterns, so it is a symbol",
       "field and bracket patterns differ from code's: the line's end in every lookahead above is also a fieldContinuation match, and in field mode a fieldDelimiter match; a string opening also takes an escapedStringOpenings entry after stringPrefix, tried first; a bad prefix also stands before an escapedStringOpenings entry; a symbol is a run of characters, each either no stopChars character and no backslash, or a backslash matching fieldSymbolBackslash, and in field mode never one where fieldDelimiter matches, a fieldDelimiter match alone being a symbol too; in field mode a comment stops before a } or a fieldDelimiter match; spaces also take fieldContinuation matches",
@@ -1263,6 +1280,254 @@
       "start": 5,
       "replaceStart": 5,
       "end": 5
+    },
+    {
+      "before": "",
+      "text": "f\"{x!z}\" (fo",
+      "caret": 12,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "f\"{x! r}\" fo",
+      "caret": 12,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "f\"{x!}\" fo",
+      "caret": 10,
+      "start": 8,
+      "replaceStart": 8,
+      "end": 10
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r z}\" fo",
+      "caret": 13,
+      "start": 11,
+      "replaceStart": 11,
+      "end": 13
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r\"}\"{fo",
+      "caret": 12,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x!s\"}\"{fo",
+      "caret": 12,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "f\"{x!\"a\"} fo",
+      "caret": 12,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "f\"{x!\\\"a\"} fo",
+      "caret": 13,
+      "start": 11,
+      "replaceStart": 11,
+      "end": 13
+    },
+    {
+      "before": "",
+      "text": "f\"{x!r''':{a.'''b",
+      "caret": 17,
+      "start": 16,
+      "replaceStart": 16,
+      "end": 17
+    },
+    {
+      "before": "",
+      "text": "f\"{x!f''':{a.'''b",
+      "caret": 17,
+      "start": 11,
+      "replaceStart": 13,
+      "end": 17
+    },
+    {
+      "before": "",
+      "text": "f\"{x!rb\"a\"} fo",
+      "caret": 14,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x!fr\"a\"} fo",
+      "caret": 14,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x!ub\"a\"} fo",
+      "caret": 14,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{!\"\"\":\"",
+      "caret": 9,
+      "start": 9,
+      "replaceStart": 9,
+      "end": 9
+    },
+    {
+      "before": "f\"}\"\n",
+      "text": "f\"{x!r}\"",
+      "caret": 4,
+      "start": 3,
+      "replaceStart": 3,
+      "end": 4
+    },
+    {
+      "before": "",
+      "text": "f\"{=:\"\" fo",
+      "caret": 10,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{,=:\"\" fo",
+      "caret": 11,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "f\"{x:\n",
+      "text": "\" fo",
+      "caret": 4,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 4
+    },
+    {
+      "before": "f\"{x:\\\n",
+      "text": "\" fo",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "f\"{x:\\\\\n",
+      "text": "\" fo",
+      "caret": 4,
+      "start": 2,
+      "replaceStart": 2,
+      "end": 4
+    },
+    {
+      "before": "f\"{x:\\\r\n",
+      "text": "\" fo",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{x:\" fo",
+      "caret": 9,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"\"\"{x:\"\"\"\" fo",
+      "caret": 14,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{f\\\"{x:\\\"} fo",
+      "caret": 15,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "",
+      "text": "f\"{f\\\"a\"} fo",
+      "caret": 12,
+      "start": 10,
+      "replaceStart": 10,
+      "end": 12
+    },
+    {
+      "before": "",
+      "text": "f\"{\\\"a\" fo",
+      "caret": 10,
+      "start": 8,
+      "replaceStart": 8,
+      "end": 10
+    },
+    {
+      "before": "",
+      "text": "f\"{z!} {y!r}\"",
+      "caret": 9,
+      "start": 8,
+      "replaceStart": 8,
+      "end": 9
+    },
+    {
+      "before": "f\"{x!}\"\n",
+      "text": "(print \"abc\")",
+      "caret": 10,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "x = f\"{a:\n}\"\n",
+      "text": "\"abc\"",
+      "caret": 4,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "f\"{x!}\"\n\"\"\"doc\n",
+      "text": "prose\"\"\"",
+      "caret": 5,
+      "start": null,
+      "replaceStart": null,
+      "end": null
+    },
+    {
+      "before": "f\"{x!}\"\nf\"\"\"{a}\n",
+      "text": "{b!r}\"\"\"",
+      "caret": 2,
+      "start": 1,
+      "replaceStart": 1,
+      "end": 2
     },
     {
       "before": "",

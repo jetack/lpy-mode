@@ -1132,9 +1132,10 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; read from its start, so a string or comment opened lines above holds the
 ;; caret), the body step `lpy--word-body', each mode's token patterns
 ;; `lpy--word-token-kinds', and the run, word token, debug = and peel steps
-;; `lpy--word-span'.  In a string's or comment's text there is no word,
-;; nor where the reader refuses the text before the caret: it recovers past
-;; the error, but the spec asks no client to agree there.
+;; `lpy--word-span'.  In a string's or comment's text there is no word.
+;; A text the reader refuses before the caret (the refusals step) is read
+;; past, the scan recovering in place as the reader does, so the word
+;; below a malformed f-string is still completed.
 ;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
 ;; Python's definition, and the buffer may be in another mode.  The `\w'/Nd
 ;; classes come from the running Emacs's Unicode tables, as the spec's own
@@ -1142,10 +1143,11 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; the two agree where their Unicode versions agree.
 ;; Cost: every call copies the text from the buffer's start (widened)
 ;; through the caret's line end into one scan buffer and normalizes its
-;; digits, linear in that text.  The lex then
-;; resumes from `lpy--word-scan-cache', the last top-level state an earlier
-;; scan recorded before the caret's line, while the text through that
-;; state's line end is unchanged; an edit above it re-lexes from the start.
+;; digits, linear in that text.  The lex then resumes from
+;; `lpy--word-scan-cache', the last top-level state an earlier scan
+;; recorded before the caret's line, while the text that state depends on
+;; (through its line end) is unchanged; an edit above it re-lexes from the
+;; start.
 
 (defconst lpy--word-boundary-rule
   '((stopChars . ("\u0009" "\u000a" "\u000b" "\u000c" "\u000d" "\u001c"
@@ -1196,6 +1198,8 @@ rule of eglot and nREPL candidates, so one kind displays identically."
                    "\u2029" "\u202f" "\u205f" "\u3000"))
     (fieldDelimiter . ":|!(?!=)")
     (conversionNames . ("a" "r" "s"))
+    (plainStringPrefixes . ("" "r" "u" "b" "br" "rb"))
+    (interpolatedStringPrefixes . ("f" "rf" "fr" "t" "rt" "tr"))
     (conversionEnds . (":" "}"))
     (fieldContinuation . "\\\\(?:\\r\\n|\\r|\\n|\\Z)")
     (fieldSymbolBackslash . "\\\\(?![\"\\r\\n]|\\Z)")
@@ -1757,17 +1761,20 @@ single opening brace) or `close' (a single closing brace)."
     result))
 
 (cl-defstruct (lpy--word-literal
-               (:constructor lpy--word-literal (quote-text raw kind))
+               (:constructor lpy--word-literal (quote-text raw kind body))
                (:copier nil))
-  "An open f/t-string literal of the context scan."
-  quote-text raw kind)
+  "An open f/t-string literal of the context scan: its quote as written,
+whether it is RAW, its kindLetters KIND and where its BODY starts."
+  quote-text raw kind body)
 
 (cl-defstruct (lpy--word-field
                (:constructor lpy--word-field (literal))
                (:copier nil))
   "An open field of the context scan: its LITERAL, open BRACKETS, whether
-its format SPEC is being read and whether that spec holds a NESTED field."
-  literal (brackets 0) spec nested)
+its format SPEC is being read, whether that spec holds a NESTED field,
+and whether the field has read a TOKEN other than spaces, commas and
+comments (a leading `=' is a refusal)."
+  literal (brackets 0) spec nested token)
 
 (defun lpy--word-string-kind (prefix)
   "Return (RAW . KIND) of a string opening's PREFIX.
@@ -1788,47 +1795,175 @@ KIND is the kindLetters kind the prefix names, nil for a plain string."
 (defconst lpy--word-conversion-names (lpy--word-rule 'conversionNames)
   "The names a conversion may have.")
 
+(defconst lpy--word-plain-prefixes (lpy--word-rule 'plainStringPrefixes)
+  "A conversion name glued to a string opening, lower-cased, that makes
+it a plain string's prefix: the string is read.")
+
+(defconst lpy--word-interpolated-prefixes
+  (lpy--word-rule 'interpolatedStringPrefixes)
+  "A conversion name glued to a string opening, lower-cased, that makes
+it an f/t-string's prefix: the string is not read.")
+
 (defconst lpy--word-whitespace (lpy--word-rule-chars 'whitespace)
   "The rule's whitespace characters.")
 
-(defun lpy--word-conversion-end (start end)
-  "Return END when the conversion at the `!' at START is valid, else nil.
-END is the conversionEnds character after it.  Valid: a conversionNames
-name right after the `!' (`str.isalnum' characters or `_'), then only
-blanks (whitespace characters or fieldContinuation matches) up to END."
-  (let ((at (1+ start)))
-    (while (let ((c (char-after at)))
-             (or (eq c ?_) (lpy--word-alnum-p c)))
-      (setq at (1+ at)))
-    (when (member (buffer-substring-no-properties (1+ start) at)
-                  lpy--word-conversion-names)
-      (while (and (< at end)
-                  (or (memq (char-after at) lpy--word-whitespace)
-                      (lpy--word-at lpy--word-continuation-regexp at)))
-        (setq at (1+ at)))
-      (and (= at end) end))))
+(defconst lpy--word-line-breaks (lpy--word-rule-chars 'lineBreakChars)
+  "The characters that end a line, as the reader splits lines.
+A CR LF pair is one break, but either character ends the line before it
+and starts the one after it, so no line start needs the pair.")
+
+(defconst lpy--word-line-break-regexp
+  (lpy--word-char-class lpy--word-line-breaks)
+  "Matches a line-break character.")
+
+(defconst lpy--word-string-openings
+  (append (lpy--word-rule 'escapedStringOpenings)
+          (lpy--word-rule 'stringOpenings))
+  "The quotes a string after a conversion's `!' may open with, in the
+order tried: the escaped ones first, each list as the rule orders it.")
+
+(defconst lpy--word-opening-length
+  (apply #'max (mapcar #'length lpy--word-string-openings))
+  "The longest string opening's length.")
+
+(defun lpy--word-opening-at (pos)
+  "Return the string opening's quote at POS (no prefix), or nil."
+  (cl-find-if (lambda (quote-text) (lpy--word-starts-with-p quote-text pos))
+              lpy--word-string-openings))
+
+(defun lpy--word-name-end (pos)
+  "Return where the conversion name at POS ends.
+Its characters are those `str.isalnum' holds, and `_' (the steps name it)."
+  (while (let ((c (char-after pos)))
+           (and c (or (eq c ?_) (lpy--word-alnum-p c))))
+    (setq pos (1+ pos)))
+  pos)
+
+(defun lpy--word-blanks-end (pos)
+  "Return where the blanks at POS end.
+Blanks are whitespace characters and fieldContinuation matches, read a
+character at a time, as the reference interpreter does."
+  (while (let ((c (char-after pos)))
+           (and c (or (memq c lpy--word-whitespace)
+                      (lpy--word-at lpy--word-continuation-regexp pos))))
+    (setq pos (1+ pos)))
+  pos)
+
+(defun lpy--word-spec-line-break (start end)
+  "Return the first line break in START..END, or nil.
+A break after an odd run of backslashes, counted back to START at most,
+is continued, not a break; a CR LF pair is one break."
+  (let ((i start) (found nil))
+    (while (and (not found) (< i end))
+      (if (not (memq (char-after i) lpy--word-line-breaks))
+          (setq i (1+ i))
+        (let ((run i))
+          (while (and (> run start)
+                      (eq (char-after (1- run)) lpy--word-backslash))
+            (setq run (1- run)))
+          (if (cl-evenp (- i run))
+              (setq found i)
+            ;; The steps name the CR LF pair.
+            (setq i (+ i (if (lpy--word-starts-with-p "\r\n" i) 2 1)))))))
+    found))
 
 (defun lpy--word-context (stop &optional from snapshot)
-  "Return (MODE . RESUME), the context and resume steps at STOP, or nil.
+  "Return (MODE . RESUME), the context and resume steps at STOP.
 Lexes the current buffer's accessible text from its start, over a stack
 of the f/t literals and fields open.  MODE is `code', `field', `bracket'
-or `text'; RESUME is where the last string or literal the scan closed
-ends (the text's start when none).  Nil where the reader refuses the text
-before STOP.
-FROM, a (POS . RESUME) state at the top level (no literal open) that a
-scan of the same text up to POS's line end recorded, starts the scan
-there.  SNAPSHOT, a cons (LIMIT . nil), records in its cdr the scan's
-last such state before LIMIT (`lpy--word-scan-cache')."
-  (catch 'context
-    (let ((stack nil)
-          (pos (if from (car from) (point-min)))
-          (resume (if from (cdr from) (point-min)))
-          (open (car lpy--word-braces)) (close (nth 1 lpy--word-braces)))
-      (cl-flet ((done (mode) (throw 'context (cons mode resume)))
-                (refused () (throw 'context nil)))
+or `text'.  RESUME is where the last string or literal the scan closed
+ends or where the scan last resumed past a refusal, whichever is later
+\(the text's start when neither).
+A text the reader refuses before STOP (the refusals step) does not end
+the scan: it goes on in place, as the reader recovers.  The stack keeps
+its entries up to its innermost literal (a bareQuote ending an escaped
+literal's body drops that literal too, with the fields above the next
+one), and the scan resumes in that literal's text at the refusal's end,
+or where it last resumed when that is later.
+FROM, a (POS CLOSED RESUMED . DEPENDS) state at the top level (no literal
+open) that a scan of the same text recorded, starts the scan there.
+SNAPSHOT, a cons (LIMIT . nil), records in its cdr the scan's last such
+state before LIMIT whose DEPENDS is not past LIMIT
+\(`lpy--word-scan-cache').  DEPENDS is the end of the text the state
+depends on ahead of its position, `most-positive-fixnum' when it depends
+on STOP."
+  (let ((stack nil)
+        (pos (point-min)) (closed (point-min)) (resumed (point-min))
+        (depends (point-min))
+        (open (car lpy--word-braces)) (close (nth 1 lpy--word-braces)))
+    (when from
+      (pcase-setq `(,pos ,closed ,resumed . ,depends) from))
+    (catch 'context
+      (cl-labels
+          ((done (mode) (throw 'context (cons mode (max closed resumed))))
+           (refuse (end &optional literal)
+             ;; The recovery from a refusal ending at END: keep the stack up
+             ;; to its innermost literal, dropping that one too when LITERAL.
+             (while (lpy--word-field-p (car stack)) (pop stack))
+             (when literal
+               (pop stack)
+               (while (lpy--word-field-p (car stack)) (pop stack)))
+             (setq resumed (max end resumed) pos resumed))
+           (depend (end) (setq depends (max depends end)))
+           (read-string (at raw)
+             ;; The conversion string at AT, a plain string: non-nil when it
+             ;; refuses itself (recovered from).  Its body may run past the
+             ;; literal it is read in, so the state depends on the text it
+             ;; reads, and on STOP when its outcome is decided by STOP.
+             (let ((quote-text (lpy--word-opening-at at)))
+               (pcase-let ((`(,kind . ,end)
+                            (lpy--word-body (+ at (length quote-text))
+                                            quote-text raw nil nil)))
+                 (cond ((and (eq kind 'refused) (< end stop))
+                        (depend (1+ end))
+                        (refuse (+ at (length quote-text)))
+                        t)
+                       ((eq kind 'quote)
+                        (let ((closing (+ end (length quote-text))))
+                          (depend closing)
+                          (when (<= closing stop) (setq closed closing)))
+                        nil)
+                       (t (depend most-positive-fixnum) nil)))))
+           (conversion (start)
+             ;; The conversion at the `!' at START, its text ending before
+             ;; STOP: resume field mode past it, or refuse it.
+             (let ((ends (save-excursion
+                           (goto-char (1+ start))
+                           (and (re-search-forward lpy--word-conversion-ends
+                                                   stop t)
+                                (match-beginning 0)))))
+               (unless ends (done 'text))
+               ;; Each read below ends at ENDS, an opening's at most past it.
+               (depend (+ ends 1 lpy--word-opening-length))
+               (let* ((name-end (lpy--word-name-end (1+ start)))
+                      (name (buffer-substring-no-properties (1+ start) name-end))
+                      (glued (and (lpy--word-opening-at name-end)
+                                  (downcase name))))
+                 (cond
+                  ((string-empty-p name)
+                   (let ((at (lpy--word-blanks-end (1+ start))))
+                     (cond ((= (lpy--word-name-end at) at)
+                            (unless (and (lpy--word-opening-at at)
+                                         (read-string at nil))
+                              (refuse (1+ at))))
+                           (t (refuse (1+ start))))))
+                  ((member glued lpy--word-plain-prefixes)
+                   (unless (read-string name-end
+                                        (car (lpy--word-string-kind name)))
+                     (refuse (+ start 2))))
+                  ((member glued lpy--word-interpolated-prefixes)
+                   (refuse (+ start 2)))
+                  ((not (member name lpy--word-conversion-names))
+                   (refuse name-end))
+                  (t
+                   (let ((rest (lpy--word-blanks-end name-end)))
+                     (if (lpy--word-at lpy--word-conversion-ends rest)
+                         (setq pos rest)
+                       (refuse (1+ rest))))))))))
         (while t
-          (when (and snapshot (null stack) (< pos (car snapshot)))
-            (setcdr snapshot (cons pos resume)))
+          (when (and snapshot (null stack) (< pos (car snapshot))
+                     (<= depends (car snapshot)))
+            (setcdr snapshot (cl-list* pos closed resumed depends)))
           (let ((top (car stack)))
             (if (and top (or (lpy--word-literal-p top)
                              (lpy--word-field-spec top)))
@@ -1837,26 +1972,37 @@ last such state before LIMIT (`lpy--word-scan-cache')."
                        (literal (if spec (lpy--word-field-literal spec) top))
                        (quote-text (lpy--word-literal-quote-text literal)))
                   (when (>= pos stop) (done 'text))
-                  (pcase-let ((`(,kind . ,at)
-                               (lpy--word-body
-                                pos quote-text (lpy--word-literal-raw literal)
-                                t (cond ((null spec) lpy--word-braces)
-                                        ((lpy--word-field-nested spec)
-                                         (list open))))))
+                  (pcase-let* ((`(,kind . ,at)
+                                (lpy--word-body
+                                 pos quote-text (lpy--word-literal-raw literal)
+                                 t (cond ((null spec) lpy--word-braces)
+                                         ((lpy--word-field-nested spec)
+                                          (list open)))))
+                               (break
+                                (and spec
+                                     (= 1 (cl-count-if-not
+                                           (lambda (c)
+                                             (eq c lpy--word-backslash))
+                                           quote-text))
+                                     (lpy--word-spec-line-break pos at))))
                     (cond
+                     ((and break (< break stop)) (refuse (1+ break)))
+                     ((and (eq kind 'refused) (< at stop))
+                      (refuse (lpy--word-literal-body literal) t))
                      ((eq kind 'quote)
-                      (when (> (+ at (length quote-text)) stop) (done 'text))
-                      (when spec (refused))
-                      (setq pos (+ at (length quote-text)) resume pos)
-                      (pop stack))
-                     ((and (eq kind 'refused) (< at stop)) (refused))
+                      (let ((end (+ at (length quote-text))))
+                        (when (> end stop) (done 'text))
+                        (if spec
+                            (refuse end)
+                          (setq pos end closed end)
+                          (pop stack))))
                      ((or (memq kind '(end refused)) (>= at stop)) (done 'text))
                      ((eq kind 'field)
                       (when spec (setf (lpy--word-field-nested spec) t))
                       (push (lpy--word-field literal) stack)
                       (setq pos (1+ at)))
                      (spec (pop stack) (setq pos (1+ at)))
-                     (t (refused)))))
+                     (t (refuse (1+ at))))))
               (let* ((field top)
                      (mode (cond ((null field) 'code)
                                  ((> (lpy--word-field-brackets field) 0) 'bracket)
@@ -1865,52 +2011,54 @@ last such state before LIMIT (`lpy--word-scan-cache')."
                                 (done mode))))
                 (pcase-let ((`(,start ,kind . ,end) token))
                   (cond
+                   ;; The steps name the leading `=' and the two delimiters:
+                   ;; `:' starts the format spec, `!' the conversion.
+                   ((and (eq mode 'field)
+                         (not (lpy--word-field-token field))
+                         (eq (char-after start) ?=)
+                         (not (eq (char-after (1+ start)) ?=)))
+                    (refuse (1+ start)))
                    ((and (eq mode 'field) (eq (char-after start) close))
                     (pop stack)
                     (setq pos (1+ start)))
                    ((and (eq mode 'field)
                          (lpy--word-at lpy--word-delimiter-regexp start))
-                    ;; The steps name the two delimiters: `:' starts the
-                    ;; format spec, `!' the conversion.
                     (if (eq (char-after start) ?:)
                         (setf (lpy--word-field-spec field) t
                               pos (1+ start))
-                      (let ((end (save-excursion
-                                   (goto-char (1+ start))
-                                   (and (re-search-forward
-                                         lpy--word-conversion-ends stop t)
-                                        (match-beginning 0)))))
-                        (unless end (done 'text))
-                        (setq pos (or (lpy--word-conversion-end start end)
-                                      (refused))))))
+                      (conversion start)))
                    ((and (eq kind 'comment) (>= end stop)) (done 'text))
                    ((> end stop) (done mode))
-                   ((eq kind 'string)
-                    (let* ((prefix-end (lpy--word-at lpy--word-prefix-regexp
-                                                     start))
-                           (quote-text (buffer-substring-no-properties
-                                        prefix-end end))
-                           (string-kind (lpy--word-string-kind
-                                         (buffer-substring-no-properties
-                                          start prefix-end))))
-                      (if (cdr string-kind)
-                          (progn (push (lpy--word-literal
-                                        quote-text (car string-kind)
-                                        (cdr string-kind))
-                                       stack)
-                                 (setq pos end))
-                        (pcase-let ((`(,body-stop . ,at)
-                                     (lpy--word-body end quote-text
-                                                     (car string-kind) nil nil)))
-                          (when (and (eq body-stop 'refused) (< at stop))
-                            (refused))
-                          (when (or (not (eq body-stop 'quote))
-                                    (> (+ at (length quote-text)) stop))
-                            (done 'text))
-                          (setq pos (+ at (length quote-text)) resume pos)))))
                    (t
                     (setq pos end)
-                    (when field
+                    (when (and field (not (memq kind '(spaces comment comma))))
+                      (setf (lpy--word-field-token field) t))
+                    (cond
+                     ((eq kind 'string)
+                      (let* ((prefix-end (lpy--word-at lpy--word-prefix-regexp
+                                                       start))
+                             (quote-text (buffer-substring-no-properties
+                                          prefix-end end))
+                             (string-kind (lpy--word-string-kind
+                                           (buffer-substring-no-properties
+                                            start prefix-end))))
+                        (if (cdr string-kind)
+                            (push (lpy--word-literal
+                                   quote-text (car string-kind)
+                                   (cdr string-kind) end)
+                                  stack)
+                          (pcase-let ((`(,body-stop . ,at)
+                                       (lpy--word-body end quote-text
+                                                       (car string-kind)
+                                                       nil nil)))
+                            (cond ((and (eq body-stop 'refused) (< at stop))
+                                   (refuse end))
+                                  ((or (not (eq body-stop 'quote))
+                                       (> (+ at (length quote-text)) stop))
+                                   (done 'text))
+                                  (t (setq pos (+ at (length quote-text))
+                                           closed pos)))))))
+                     (field
                       (cond ((or (eq kind 'opening)
                                  (and (eq kind 'bad)
                                       (memq (char-before end)
@@ -1918,7 +2066,7 @@ last such state before LIMIT (`lpy--word-scan-cache')."
                              (cl-incf (lpy--word-field-brackets field)))
                             ((and (eq kind 'closing)
                                   (> (lpy--word-field-brackets field) 0))
-                             (cl-decf (lpy--word-field-brackets field))))))))))))))))
+                             (cl-decf (lpy--word-field-brackets field)))))))))))))))))
 
 (defun lpy--word-line-token (bol caret mode run-start endpos)
   "The word token step: return (START KIND . END), or nil.
@@ -2024,24 +2172,24 @@ KIND is the token's, `symbol' or `number'.  Return the span's columns."
             (or (cl-position ?. line :start caret :end end) end)))))
 
 (defvar lpy--word-scan-cache nil
-  "(BEFORE HORIZON POS . RESUME): a top-level state of the last scan.
-BEFORE is the text before that scan's line, POS and RESUME a state
-`lpy--word-context' recorded before the line, and HORIZON the length of
-BEFORE's prefix the state depends on, through POS's line end.  A scan
-whose text agrees with BEFORE that far starts there, so typing on a line
-does not re-lex the text above it.  Sound because at the top level no
-token and no pattern reads past a line break (each a stop character,
-`lpy--word-line-breaks-end-top-level-tokens'): a state is decided by the
-text through its line's end.")
-
-(defconst lpy--word-line-breaks (lpy--word-rule-chars 'lineBreakChars)
-  "The characters that end a line, as the reader splits lines.
-A CR LF pair is one break, but either character ends the line before it
-and starts the one after it, so no position needs the pair.")
-
-(defconst lpy--word-line-break-regexp
-  (lpy--word-char-class lpy--word-line-breaks)
-  "Matches a line-break character.")
+  "(BEFORE HORIZON . STATE): a top-level state of the last scan.
+BEFORE is the text before that scan's line, STATE a (POS CLOSED RESUMED
+. DEPENDS) state `lpy--word-context' recorded before the line, and
+HORIZON the length of BEFORE's prefix the state depends on: through
+POS's line end, and through DEPENDS when that is later.  A scan whose
+text agrees with BEFORE that far starts there, so typing on a line does
+not re-lex the text above it.
+Sound because STATE is the whole scan state at POS: no literal or field
+is open there, and CLOSED and RESUMED are the two positions the resume
+step reads (RESUMED also bounds where a later refusal resumes).  At the
+top level no token and no pattern reads past a line break (each a stop
+character, `lpy--word-line-breaks-end-top-level-tokens'), and every read
+inside a literal, closed before POS, ends before POS except a conversion
+string's body and the search for a conversion's end; those raise
+DEPENDS to the end of the text they read, or past every limit when STOP
+decided them (a conversion string unclosed or refusing itself only past
+STOP), so no state that a different STOP or text below HORIZON would
+change is recorded.")
 
 (defconst lpy--word-line-breaks-end-top-level-tokens
   (or (and lpy--word-line-breaks
@@ -2053,11 +2201,8 @@ and starts the one after it, so no position needs the pair.")
 (defun lpy--word-line-context (before bol caret)
   "Return (MODE . RESUME) of the caret at column CARET of the line at BOL.
 The scan buffer holds BEFORE, the text before the line, and the line.
-RESUME is a column of the line.  Nil where the reader refuses the text
-before the caret: it recovers past the error, but the spec asks no
-client to agree there.  Starts from
-`lpy--word-scan-cache' when it holds, and updates it (a state recorded
-before a refusal is still a valid top-level state)."
+RESUME is a column of the line.  Starts from `lpy--word-scan-cache' when
+it holds, and updates it."
   (let* ((cache lpy--word-scan-cache)
          (horizon (nth 1 cache))
          (from (and cache (<= horizon (length before))
@@ -2069,14 +2214,15 @@ before a refusal is still a valid top-level state)."
     (when-let* ((state (cdr snapshot)))
       (setq lpy--word-scan-cache
             (cons before
-                  (cons (save-excursion
-                          (goto-char (car state))
-                          (1- (if (re-search-forward
-                                   lpy--word-line-break-regexp bol t)
-                                  (point)
-                                bol)))
+                  (cons (max (save-excursion
+                               (goto-char (car state))
+                               (1- (if (re-search-forward
+                                        lpy--word-line-break-regexp bol t)
+                                       (point)
+                                     bol)))
+                             (- (nthcdr 3 state) (point-min)))
                         state))))
-    (and found (cons (car found) (max (- (cdr found) bol) 0)))))
+    (cons (car found) (max (- (cdr found) bol) 0))))
 
 (defun lpy--word-span (line caret &optional before)
   "Return (START REPLACE-START END), the completion word at CARET in LINE.
@@ -2085,11 +2231,11 @@ the dotted name the server completes (sent up to the caret),
 REPLACE-START is after its last dot before the caret, where a candidate
 replaces, and END is the word's end, before the next dot.  All three are
 CARET when the word is empty, and the result is nil, where no completion
-is offered, in a string's or comment's text and where the reader refuses
-the text before the caret (it recovers past the error, but the spec asks
-no client to agree there).  BEFORE is the text before LINE (its line
-breaks included), whose strings, comments and fields decide the caret's
-context; LINE excludes its newline."
+is offered, in a string's or comment's text.  A text the reader refuses
+before the caret is read past, as the reader recovers from it.  BEFORE
+is the text before LINE (its line breaks included), whose strings,
+comments and fields decide the caret's context; LINE excludes its
+newline."
   (with-current-buffer (get-buffer-create " *lpy-word-scan*")
     (let ((case-fold-search nil)
           (inhibit-modification-hooks t))
@@ -2102,7 +2248,7 @@ context; LINE excludes its newline."
              (context (lpy--word-line-context (or before "") bol caret))
              (mode (car context))
              (run-start caret))
-        (unless (memq mode '(nil text))
+        (unless (eq mode 'text)
           (while (and (> run-start 0)
                       (not (memq (aref line (1- run-start))
                                  lpy--word-stop-chars)))
@@ -2127,8 +2273,7 @@ context; LINE excludes its newline."
 Buffer positions of `lpy--word-span' over the reader's line at point
 \(ended by each lineBreakChars character), the whole buffer's text
 before it deciding the context, narrowing aside.  Nil in a string's or
-comment's text and where the reader refuses the text before point, where
-no completion is offered, and when a position
+comment's text, where no completion is offered, and when a position
 falls outside the accessible region: a word the narrowing cuts cannot
 be completed from inside it.  The nREPL source sends
 WORD-START..point, the full dotted prefix; both the eglot and nREPL
