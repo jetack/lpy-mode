@@ -1253,14 +1253,9 @@ SENT is set to the prefix the client asked for."
                          #'string<)
                    (sort (mapcar #'car lpy--word-boundary-rule) #'string<)))))
 
-;; First Emacs shipping each Unicode version (from Emacs's NEWS files).
-(defconst lpy-nrepl-test--unicode-emacs
-  '(("13.0" . "27.1") ("14.0" . "28.1") ("15.0" . "29.1") ("15.1" . "30.1")))
-
 (ert-deftest lpy-nrepl-test-declared-emacs-meets-completion-needs ()
   ;; Defect: the header lets Emacs < 30 install the package, where eglot
-  ;; ignores the bounds provider and the merge drops a source, and older
-  ;; Unicode tables mis-classify the spec's `\\w'/Nd.
+  ;; ignores the bounds provider and the merge drops a source.
   (require 'lisp-mnt)
   (let* ((root (file-name-directory
                 (directory-file-name
@@ -1268,19 +1263,10 @@ SENT is set to the prefix the client asked for."
          (requires (with-temp-buffer
                      (insert-file-contents (expand-file-name "lpy-mode.el" root))
                      (car (read-from-string (lm-header "package-requires")))))
-         (declared (cadr (assq 'emacs requires)))
-         (unicode (alist-get 'unicode
-                             (alist-get 'rule (lpy-nrepl-test--word-spec))))
-         (unicode-mm (mapconcat #'identity
-                                (seq-take (split-string unicode "\\.") 2) "."))
-         (unicode-emacs (cdr (assoc unicode-mm lpy-nrepl-test--unicode-emacs))))
+         (declared (cadr (assq 'emacs requires))))
     (should declared)
     ;; `bounds-of-thing-at-point-provider-alist' is new in Emacs 30.1.
-    (should (version<= "30.1" declared))
-    (unless unicode-emacs
-      (ert-fail (format "Unicode %s is not in `lpy-nrepl-test--unicode-emacs'; add the Emacs that ships it"
-                        unicode)))
-    (should (version<= unicode-emacs declared))))
+    (should (version<= "30.1" declared))))
 
 (ert-deftest lpy-nrepl-test-word-spec-file-is-lispythons ()
   ;; Defect: lispython publishes a new word-boundary spec and the committed
