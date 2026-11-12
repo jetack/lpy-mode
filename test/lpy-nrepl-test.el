@@ -1328,6 +1328,20 @@ SENT is set to the prefix the client asked for."
       (goto-char (point-max))
       (should (equal (cons first (lpy--completion-span)) (list first))))))
 
+(ert-deftest lpy-nrepl-test-word-span-cache-sits-past-a-closed-f-string ()
+  ;; Defect: a read of known extent (a literal compared, a character) is
+  ;; counted as reading through the next line break, so a field's token
+  ;; tried near its line's end moves the scan's read frontier past the
+  ;; caret's line start, and the cached state stays before the f-string
+  ;; on the line above: every keystroke below re-lexes it.
+  (with-temp-buffer
+    (insert "(defn f [] (g 1 2))\nx = f\"a{b}\"")
+    (let ((closed (point)))
+      (insert "\nfo")
+      (setq lpy--word-scan-cache nil)
+      (should (lpy--completion-span))
+      (should (>= (nth 2 lpy--word-scan-cache) closed)))))
+
 (ert-deftest lpy-nrepl-test-word-span-reads-past-a-blank-conversion ()
   ;; Defect: the blanks after a conversion's name are whitespace alone,
   ;; so a continuation (or a non-ASCII whitespace) before the end

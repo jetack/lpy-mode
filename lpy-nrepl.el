@@ -1516,37 +1516,54 @@ and starts the one after it, so no line start needs the pair.")
 
 (defvar lpy--word-frontier nil
   "Where the text the running context scan has read ends, or nil.
-Bound by `lpy--word-context'; every read of the scan's text goes through
-`lpy--word-read', so a scan state's dependence on the text is the
-frontier when the state is reached (`lpy--word-scan-cache').
-`most-positive-fixnum' once a read has met the text's end or STOP has
-decided an outcome the scan goes on past.")
+Bound by `lpy--word-context'.  Every read of the scan's text records
+itself with `lpy--word-read', directly or through `lpy--word-at',
+`lpy--word-search', `lpy--word-starts-with-p' or `lpy--word-char'; the
+one exception, the named escape's `search-forward' in `lpy--word-body',
+is covered by the stop search that follows it, which starts where it
+ended (or fails at the text's end).  So a scan state's dependence on
+the text is the frontier when the state is reached
+\(`lpy--word-scan-cache').  `most-positive-fixnum' once a read has met
+the text's end or STOP has decided an outcome the scan goes on past.")
 
-(defun lpy--word-read (end)
+(defvar lpy--word-frontier-break 0
+  "The line break the last rounded `lpy--word-read' found, or 0.
+Rounding is monotone in END, so a regexp read ending at or before it
+rounds to no later than the frontier already holds.")
+
+(defun lpy--word-read (end &optional exact)
   "Record that the context scan read the text before END.
-The frontier moves past the line break at or after END (a CR LF pair
-whole), not to END alone: a pattern that matched or failed there may
-have looked at the characters after it, but none past that break, as
-every line break is a stop character
+EXACT, for a read of known extent (characters, a literal compared, a
+one-character class searched), moves the frontier to END.  Else, for a
+regexp match or miss, past the line break at or after END (a CR LF pair
+whole): the pattern may have looked at the characters after END, but
+none past that break, as every line break is a stop character
 \(`lpy--word-line-breaks-end-top-level-tokens') and a fieldContinuation
-holds one break.  A read reaching the text's end (no break after END)
-moves it to `most-positive-fixnum': text appended there could change
-it."
-  (when (and lpy--word-frontier (>= end lpy--word-frontier))
-    (setq lpy--word-frontier
-          (save-excursion
-            (save-match-data
-              (goto-char (min end (point-max)))
-              (if (and (<= end (point-max))
-                       (re-search-forward lpy--word-line-break-regexp nil t))
-                  (if (and (eq (char-before) ?\r) (eq (char-after) ?\n))
-                      (1+ (point))
-                    (point))
-                most-positive-fixnum))))))
+holds one break.  A read past the text's end, or a regexp read with no
+break after END, moves it to `most-positive-fixnum': text appended
+there could change it."
+  (when lpy--word-frontier
+    (let ((reached
+           (cond ((> end (point-max)) most-positive-fixnum)
+                 (exact end)
+                 ((<= end lpy--word-frontier-break) nil)
+                 (t (save-excursion
+                      (save-match-data
+                        (goto-char end)
+                        (if (not (re-search-forward
+                                  lpy--word-line-break-regexp nil t))
+                            most-positive-fixnum
+                          (setq lpy--word-frontier-break (1- (point)))
+                          (if (and (eq (char-before) ?\r)
+                                   (eq (char-after) ?\n))
+                              (1+ (point))
+                            (point)))))))))
+      (when (and reached (> reached lpy--word-frontier))
+        (setq lpy--word-frontier reached)))))
 
 (defun lpy--word-char (pos)
   "Return the character at POS, read by the context scan."
-  (lpy--word-read (1+ pos))
+  (lpy--word-read (1+ pos) t)
   (char-after pos))
 
 (defun lpy--word-at (regexp pos)
@@ -1562,21 +1579,32 @@ lookahead's, `lpy--word-python-regexp'), else the match's end."
       (lpy--word-read (1+ pos))
       nil)))
 
-(defun lpy--word-search (regexp bound)
+(defun lpy--word-search (regexp bound &optional exact)
   "Return where REGEXP next matches from point before BOUND, or nil.
-Point is left after the match.  A miss up to BOUND is decided by BOUND
-\(the scan's STOP), so it moves the frontier past every limit."
+Point is left after the match.  EXACT when REGEXP is one character
+class, which reads nothing past its match.  A miss is decided by BOUND
+\(the scan's STOP) or the text's end, so it moves the frontier past
+every limit."
   (if (re-search-forward regexp bound t)
-      (progn (lpy--word-read (match-end 0)) (match-beginning 0))
+      (progn (lpy--word-read (match-end 0) exact) (match-beginning 0))
     (lpy--word-read most-positive-fixnum)
     nil))
 
 (defun lpy--word-starts-with-p (string pos)
-  "Return non-nil when the current buffer holds STRING at POS."
-  (let ((end (+ pos (length string))))
-    (lpy--word-read end)
-    (and (<= end (point-max))
-         (string= string (buffer-substring-no-properties pos end)))))
+  "Return non-nil when the current buffer holds STRING at POS.
+Read through the first character that differs, or through STRING's end."
+  (let* ((available (min (length string) (- (point-max) pos)))
+         (compared (compare-strings
+                    string 0 nil
+                    (buffer-substring-no-properties pos (+ pos available))
+                    0 nil)))
+    ;; COMPARED is t, or 1 + the index where the two differ, signed; an
+    ;; index of AVAILABLE when the text ends inside STRING.
+    (lpy--word-read (if (eq compared t)
+                        (+ pos available)
+                      (+ pos (abs compared)))
+                    t)
+    (eq compared t)))
 
 (defun lpy--word-meta-matcher (form-end)
   "Return a matcher of a meta-indicator not followed by FORM-END.
@@ -1799,7 +1827,7 @@ move `lpy--word-frontier'."
     (save-excursion
       (while (not result)
         (goto-char i)
-        (let ((j (lpy--word-search stops nil)))
+        (let ((j (lpy--word-search stops nil t)))
           (if (not j)
               (setq result (cons 'end n))
             (let ((c (char-after j)))
@@ -1932,10 +1960,12 @@ ends or where the scan last resumed past a refusal, whichever is later
 \(the text's start when neither).
 A text the reader refuses before STOP (the refusals step) does not end
 the scan: it goes on in place, as the reader recovers.  The stack keeps
-its entries up to its innermost literal (a bareQuote ending an escaped
+its entries up to its innermost literal; a bareQuote ending an escaped
 literal's body drops that literal too, with the fields above the next
-one), and the scan resumes in that literal's text at the refusal's end,
-or where it last resumed when that is later.
+one, as does any other refusal ending at or before where the scan last
+resumed.  The scan resumes at the refusal's end, or where it last
+resumed when that is later, in the innermost literal the stack then
+holds (code mode when none is left).
 FROM, a (POS CLOSED RESUMED . FRONTIER) state at the top level (no
 literal open) that a scan of the same text recorded, starts the scan
 there.  SNAPSHOT, a cons (LIMIT . nil), records in its cdr the scan's
@@ -1944,7 +1974,7 @@ last such state before LIMIT whose FRONTIER is not past LIMIT
 state was reached: where the text the scan had read ends."
   (let ((stack nil)
         (pos (point-min)) (closed (point-min)) (resumed (point-min))
-        (lpy--word-frontier (point-min))
+        (lpy--word-frontier (point-min)) (lpy--word-frontier-break 0)
         (open (car lpy--word-braces)) (close (nth 1 lpy--word-braces)))
     (when from
       (pcase-setq `(,pos ,closed ,resumed . ,lpy--word-frontier) from))
@@ -1953,9 +1983,11 @@ state was reached: where the text the scan had read ends."
           ((done (mode) (throw 'context (cons mode (max closed resumed))))
            (refuse (end &optional literal)
              ;; The recovery from a refusal ending at END: keep the stack up
-             ;; to its innermost literal, dropping that one too when LITERAL.
+             ;; to its innermost literal, dropping that one too when LITERAL
+             ;; or when END is not past the last resume point (a pass that
+             ;; neither moves forward nor holds fewer literals could repeat).
              (while (lpy--word-field-p (car stack)) (pop stack))
-             (when literal
+             (when (and (or literal (<= end resumed)) stack)
                (pop stack)
                (while (lpy--word-field-p (car stack)) (pop stack)))
              (setq resumed (max end resumed) pos resumed))
@@ -1981,7 +2013,7 @@ state was reached: where the text the scan had read ends."
              ;; STOP: resume field mode past it, or refuse it.
              (let ((ends (save-excursion
                            (goto-char (1+ start))
-                           (lpy--word-search lpy--word-conversion-ends stop))))
+                           (lpy--word-search lpy--word-conversion-ends stop t))))
                (unless ends (done 'text))
                (let* ((name-end (lpy--word-name-end (1+ start)))
                       (name (buffer-substring-no-properties (1+ start) name-end))
