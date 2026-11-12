@@ -1132,7 +1132,9 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; read from its start, so a string or comment opened lines above holds the
 ;; caret), the body step `lpy--word-body', each mode's token patterns
 ;; `lpy--word-token-kinds', and the run, word token, debug = and peel steps
-;; `lpy--word-span'.  In a string's or comment's text there is no word.
+;; `lpy--word-span'.  In a string's or comment's text there is no word,
+;; nor where the reader refuses the text before the caret (the spec has no
+;; answer there).
 ;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
 ;; Python's definition, and the buffer may be in another mode.  The `\w'/Nd
 ;; classes come from the running Emacs's Unicode tables, as the spec's own
@@ -1193,6 +1195,7 @@ rule of eglot and nREPL candidates, so one kind displays identically."
                    "\u2006" "\u2007" "\u2008" "\u2009" "\u200a" "\u2028"
                    "\u2029" "\u202f" "\u205f" "\u3000"))
     (fieldDelimiter . ":|!(?!=)")
+    (conversionNames . ("a" "r" "s"))
     (conversionEnds . (":" "}"))
     (fieldContinuation . "\\\\(?:\\r\\n|\\r|\\n|\\Z)")
     (fieldSymbolBackslash . "\\\\(?![\"\\r\\n]|\\Z)")
@@ -1494,6 +1497,10 @@ of Python's match (`lpy--word-at')."
   (lpy--word-python-regexp (lpy--word-rule 'fieldDelimiter))
   "Matches where a fieldDelimiter match starts (a test, not its extent).")
 
+(defconst lpy--word-continuation-regexp
+  (lpy--word-python-regexp (lpy--word-rule 'fieldContinuation))
+  "Matches a fieldContinuation, a field's line continuation.")
+
 (defun lpy--word-at (regexp pos)
   "Return where REGEXP, matched at POS in the current buffer, ends, or nil.
 The end of Python's match: group 1's start where it matched (a
@@ -1576,8 +1583,7 @@ pattern whose lookahead an Emacs regexp cannot express, a function of
 the start returning the token's end or nil."
   (let* ((in-field (not (eq mode 'code)))
          (stop (lpy--word-char-class lpy--word-stop-chars))
-         (continuation (lpy--word-python-regexp
-                        (lpy--word-rule 'fieldContinuation)))
+         (continuation lpy--word-continuation-regexp)
          ;; The line's end of every lookahead: Python's `$' is the text's
          ;; end (or before a last newline, which every set below holds).
          (end (concat "\\(?:"
@@ -1779,6 +1785,29 @@ KIND is the kindLetters kind the prefix names, nil for a plain string."
   (lpy--word-char-class (lpy--word-rule-chars 'conversionEnds))
   "Matches the character a conversion ends at.")
 
+(defconst lpy--word-conversion-names (lpy--word-rule 'conversionNames)
+  "The names a conversion may have.")
+
+(defconst lpy--word-whitespace (lpy--word-rule-chars 'whitespace)
+  "The rule's whitespace characters.")
+
+(defun lpy--word-conversion-end (start end)
+  "Return END when the conversion at the `!' at START is valid, else nil.
+END is the conversionEnds character after it.  Valid: a conversionNames
+name right after the `!' (`str.isalnum' characters or `_'), then only
+blanks (whitespace characters or fieldContinuation matches) up to END."
+  (let ((at (1+ start)))
+    (while (let ((c (char-after at)))
+             (or (eq c ?_) (lpy--word-alnum-p c)))
+      (setq at (1+ at)))
+    (when (member (buffer-substring-no-properties (1+ start) at)
+                  lpy--word-conversion-names)
+      (while (and (< at end)
+                  (or (memq (char-after at) lpy--word-whitespace)
+                      (lpy--word-at lpy--word-continuation-regexp at)))
+        (setq at (1+ at)))
+      (and (= at end) end))))
+
 (defun lpy--word-context (stop &optional from snapshot)
   "Return (MODE . RESUME), the context and resume steps at STOP, or nil.
 Lexes the current buffer's accessible text from its start, over a stack
@@ -1846,12 +1875,14 @@ last such state before LIMIT (`lpy--word-scan-cache')."
                     (if (eq (char-after start) ?:)
                         (setf (lpy--word-field-spec field) t
                               pos (1+ start))
-                      (save-excursion
-                        (goto-char (1+ start))
-                        (unless (re-search-forward lpy--word-conversion-ends
-                                                   stop t)
-                          (done 'text))
-                        (setq pos (match-beginning 0)))))
+                      (let ((end (save-excursion
+                                   (goto-char (1+ start))
+                                   (and (re-search-forward
+                                         lpy--word-conversion-ends stop t)
+                                        (match-beginning 0)))))
+                        (unless end (done 'text))
+                        (setq pos (or (lpy--word-conversion-end start end)
+                                      (refused))))))
                    ((and (eq kind 'comment) (>= end stop)) (done 'text))
                    ((> end stop) (done mode))
                    ((eq kind 'string)
@@ -2023,8 +2054,10 @@ and starts the one after it, so no position needs the pair.")
 (defun lpy--word-line-context (before bol caret)
   "Return (MODE . RESUME) of the caret at column CARET of the line at BOL.
 The scan buffer holds BEFORE, the text before the line, and the line.
-RESUME is a column of the line.  Starts from `lpy--word-scan-cache' when
-it holds, and updates it."
+RESUME is a column of the line.  Nil where the reader refuses the text
+before the caret: the spec has no answer there.  Starts from
+`lpy--word-scan-cache' when it holds, and updates it (a state recorded
+before a refusal is still a valid top-level state)."
   (let* ((cache lpy--word-scan-cache)
          (horizon (nth 1 cache))
          (from (and cache (<= horizon (length before))
@@ -2043,15 +2076,7 @@ it holds, and updates it."
                                   (point)
                                 bol)))
                         state))))
-    (if found
-        (cons (car found) (max (- (cdr found) bol) 0))
-      ;; Refused: the caret's line alone, else code.
-      (save-restriction
-        (narrow-to-region bol (point-max))
-        (let ((alone (lpy--word-context (+ bol caret))))
-          (if alone
-              (cons (car alone) (- (cdr alone) bol))
-            (cons 'code 0)))))))
+    (and found (cons (car found) (max (- (cdr found) bol) 0)))))
 
 (defun lpy--word-span (line caret &optional before)
   "Return (START REPLACE-START END), the completion word at CARET in LINE.
@@ -2059,8 +2084,9 @@ Columns, as lispython's word-boundary spec defines them: START begins
 the dotted name the server completes (sent up to the caret),
 REPLACE-START is after its last dot before the caret, where a candidate
 replaces, and END is the word's end, before the next dot.  All three are
-CARET when the word is empty, and the result is nil in a string's or
-comment's text, where no completion is offered.  BEFORE is the text
+CARET when the word is empty, and the result is nil, where no completion
+is offered, in a string's or comment's text and where the reader refuses
+the text before the caret (the spec has no answer there).  BEFORE is the text
 before LINE (its line breaks included), whose strings, comments and
 fields decide the caret's context; LINE excludes its newline."
   (with-current-buffer (get-buffer-create " *lpy-word-scan*")
@@ -2075,7 +2101,7 @@ fields decide the caret's context; LINE excludes its newline."
              (context (lpy--word-line-context (or before "") bol caret))
              (mode (car context))
              (run-start caret))
-        (unless (eq mode 'text)
+        (unless (memq mode '(nil text))
           (while (and (> run-start 0)
                       (not (memq (aref line (1- run-start))
                                  lpy--word-stop-chars)))
@@ -2100,7 +2126,8 @@ fields decide the caret's context; LINE excludes its newline."
 Buffer positions of `lpy--word-span' over the reader's line at point
 \(ended by each lineBreakChars character), the whole buffer's text
 before it deciding the context, narrowing aside.  Nil in a string's or
-comment's text, where no completion is offered, and when a position
+comment's text and where the reader refuses the text before point, where
+no completion is offered, and when a position
 falls outside the accessible region: a word the narrowing cuts cannot
 be completed from inside it.  The nREPL source sends
 WORD-START..point, the full dotted prefix; both the eglot and nREPL

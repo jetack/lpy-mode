@@ -1283,6 +1283,32 @@ SENT is set to the prefix the client asked for."
     (goto-char 6)
     (should (equal (lpy--completion-span) '(6 6 7)))))
 
+(ert-deftest lpy-nrepl-test-word-span-none-after-a-refused-conversion ()
+  ;; Defect: a conversion is read as anything up to its end character, so
+  ;; a text the reader refuses (an unknown name, none, or other text after
+  ;; it) is completed on the next line, where the spec has no answer.
+  (dolist (text '("f\"{x!z}\"" "f\"{x!}\"" "f\"{x!r(}\""))
+    (with-temp-buffer
+      (insert text "\nfo")
+      (should-not (lpy--completion-span)))))
+
+(ert-deftest lpy-nrepl-test-word-span-reads-past-a-blank-conversion ()
+  ;; Defect: the blanks after a conversion's name are whitespace alone,
+  ;; so a continuation (or a non-ASCII whitespace) before the end
+  ;; character is a refusal and the next line gets no word.
+  (with-temp-buffer
+    (insert "f\"{x!r \u0085\\\n}\"\n")
+    (let ((bol (point)))
+      (insert "fo")
+      (should (equal (lpy--completion-span) (list bol bol (point)))))))
+
+(ert-deftest lpy-nrepl-test-word-span-none-after-a-refused-text ()
+  ;; Defect: a refused text falls back to reading the caret's line alone,
+  ;; so a word is offered where the spec has no answer.
+  (with-temp-buffer
+    (insert "f\"}\"\nfo")
+    (should-not (lpy--completion-span))))
+
 (ert-deftest lpy-nrepl-test-word-span-reads-past-narrowing ()
   ;; Defect: the context is read from `point-min', so narrowing to a
   ;; region that starts inside a multi-line string makes its text code.
