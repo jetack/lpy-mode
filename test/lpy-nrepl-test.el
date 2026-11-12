@@ -1305,7 +1305,12 @@ SENT is set to the prefix the client asked for."
       (should (equal (lpy--completion-symbol-bounds) (cons (point) (point))))
       (cl-letf (((symbol-function 'lpy-nrepl-connected-p) (lambda () t)))
         (should-not (lpy-nrepl-completion-at-point)))
-      (widen)))
+      (widen))
+    ;; The narrowing's end cuts the word.
+    (narrow-to-region 1 9)
+    (goto-char 8)
+    (should-not (lpy--completion-span))
+    (should (equal (lpy--completion-symbol-bounds) '(8 . 8))))
   (with-temp-buffer
     (insert "(foo bar)")
     (narrow-to-region 5 (point-max))
