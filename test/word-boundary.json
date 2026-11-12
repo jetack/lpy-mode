@@ -1,9 +1,8 @@
 {
-  "version": 4,
+  "version": 5,
   "columns": "code points",
-  "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode (\\w holds 한, \\d holds ١)",
+  "patterns": "Python re syntax over str: \\d, \\w and \\s are Unicode as the running Python's tables define them (\\w holds 한, \\d holds ١); a client approximates \\w and \\d with its own engine's tables",
   "rule": {
-    "unicode": "15.1.0",
     "stopChars": [
       "\t",
       "\n",

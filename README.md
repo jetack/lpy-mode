@@ -48,7 +48,7 @@ Output streaming and `C-c C-c` interrupt need lispython with nREPL streaming and
 
 ## Requirements
 
-- Emacs 30.1+ (eglot completion bounds via `bounds-of-thing-at-point-provider-alist`, and the Unicode 15.1 tables the word-boundary spec needs)
+- Emacs 30.1+ (eglot completion bounds via `bounds-of-thing-at-point-provider-alist`)
 - [lispython](https://pypi.org/project/lispython/) (`lpy --nrepl` server)
 - [dash.el](https://github.com/magnars/dash.el)
 - [s.el](https://github.com/magnars/s.el)

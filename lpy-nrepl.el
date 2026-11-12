@@ -1130,13 +1130,12 @@ rule of eglot and nREPL candidates, so one kind displays identically."
 ;; interpreter, `spec_word_span' in lispython's tests/test_word_boundary.py).
 ;; Nothing here uses Emacs's `\w', syntax classes or a syntax table: none is
 ;; Python's definition, and the buffer may be in another mode.  The `\w'/Nd
-;; classes come from the running Emacs's Unicode tables, which match the
-;; spec exactly on Emacs 30 (Unicode 15.1); a newer Emacs may also count
-;; characters assigned after the spec's version.
+;; classes come from the running Emacs's Unicode tables, as the spec's own
+;; come from the running Python's (the spec names no Unicode version), so
+;; the two agree where their Unicode versions agree.
 
 (defconst lpy--word-boundary-rule
-  '((unicode . "15.1.0")
-    (stopChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
+  '((stopChars . ("\t" "\n" "\u000b" "\f" "\r" "\u001c" "\u001d" "\u001e"
                   "\u001f" " " "\"" ")" "," ";" "[" "]" "{" "}" "\u0085" "\u00a0"
                   "\u1680" "\u2000" "\u2001" "\u2002" "\u2003" "\u2004"
                   "\u2005" "\u2006" "\u2007" "\u2008" "\u2009" "\u200a"
