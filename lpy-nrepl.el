@@ -1949,8 +1949,7 @@ the patterns, until a token reaches the run's end."
 (defun lpy--word-debug-equals-p (line bol end)
   "Return non-nil when the symbol ending at column END of LINE loses its `='.
 The debug = step: LINE starts at BOL in the current buffer and ends it."
-  (let ((n (length line))
-        (whitespace (lpy--word-rule-chars 'whitespace)))
+  (let ((n (length line)))
     (and (>= end 2)
          ;; The steps name the debug `='.
          (eq (aref line (1- end)) ?=)
@@ -1958,7 +1957,7 @@ The debug = step: LINE starts at BOL in the current buffer and ends it."
          (let ((at end))
            (while (and (< at n)
                        (let ((c (aref line at)))
-                         (or (memq c whitespace)
+                         (or (memq c lpy--word-whitespace)
                              (and (eq c lpy--word-backslash) (= (1+ at) n)))))
              (setq at (1+ at)))
            (or (= at n)
