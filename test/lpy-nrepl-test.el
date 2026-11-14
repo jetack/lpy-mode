@@ -1283,6 +1283,79 @@ SENT is set to the prefix the client asked for."
     (goto-char 6)
     (should (equal (lpy--completion-span) '(6 6 7)))))
 
+(ert-deftest lpy-nrepl-test-word-span-reads-past-a-refused-text ()
+  ;; Defect: a text the reader refuses before the caret (a single `}', an
+  ;; unknown conversion, text after a valid one, a leading `=') ends the
+  ;; scan with no word, so completion is off on every line below a
+  ;; malformed f-string, where the reader recovers and completes the word
+  ;; (lispython's `completion_word_span' gives (0 0 2) for each).
+  (dolist (text '("f\"}\"" "f\"{x!z}\"" "f\"{x!r(}\"" "f\"{=}\""))
+    (with-temp-buffer
+      (insert text "\n")
+      (let ((bol (point)))
+        (insert "fo")
+        (should (equal (cons text (lpy--completion-span))
+                       (list text bol bol (point))))))))
+
+(ert-deftest lpy-nrepl-test-word-span-cache-rereads-a-conversion-end-below ()
+  ;; Defect: a scan state recorded past a refused conversion is reused
+  ;; though it depends on the conversion's end character, lines below it:
+  ;; with that line gone the conversion holds the caret in its text
+  ;; (`completion_word_span' gives None for `fo' after "f\"{x!z\"\nxx\n",
+  ;; (2 2 2) at the end of "a}" after "f\"{x!z\"\n"), yet the cached state
+  ;; reads code there.
+  (with-temp-buffer
+    (insert "f\"{x!z\"\na}")
+    (should (equal (lpy--completion-span) (list (point) (point) (point))))
+    (delete-char -2)
+    (insert "xx\nfo")
+    (should-not (lpy--completion-span))))
+
+(ert-deftest lpy-nrepl-test-word-span-cache-rereads-a-bare-quote-below ()
+  ;; Defect: a bareQuote refusal rewinds the scan to the escaped literal's
+  ;; or string's body start, but its body read went on to the bareQuote a
+  ;; line below; a state recorded past the rewind is reused once that line
+  ;; changed, and reads code where a fresh scan reads a string's text
+  ;; (`completion_word_span' gives None for "foo" after either first line
+  ;; and "\"\n" or "x\n").
+  (dolist (first '("f\"{f\\\"a\\\\\"\n" "f\"{\\\"a\\\\\"\n"))
+    (with-temp-buffer
+      (insert first "\"\nfoo")
+      (should (equal (cons first (lpy--completion-span)) (list first)))
+      (goto-char (1+ (length first)))
+      (delete-char 1)
+      (insert "x")
+      (goto-char (point-max))
+      (should (equal (cons first (lpy--completion-span)) (list first))))))
+
+(ert-deftest lpy-nrepl-test-word-span-cache-sits-past-a-closed-f-string ()
+  ;; Defect: a read of known extent (a literal compared, a character) is
+  ;; counted as reading through the next line break, so a field's token
+  ;; tried near its line's end moves the scan's read frontier past the
+  ;; caret's line start, and the cached state stays before the f-string
+  ;; on the line above: every keystroke below re-lexes it.
+  (with-temp-buffer
+    (insert "(defn f [] (g 1 2))\nx = f\"a{b}\"")
+    (let ((closed (point)))
+      (insert "\nfo")
+      (setq lpy--word-scan-cache nil)
+      (should (lpy--completion-span))
+      (should (>= (nth 2 lpy--word-scan-cache) closed)))))
+
+(ert-deftest lpy-nrepl-test-word-span-reads-past-a-blank-conversion ()
+  ;; Defect: the blanks after a conversion's name are whitespace alone,
+  ;; so a continuation (or a non-ASCII whitespace) before the end
+  ;; character is a refusal: the scan drops the field and reads its format
+  ;; spec as the literal's text, where `{{' is a doubled brace, and the
+  ;; word in the spec's nested field's bracket is lost (lispython's
+  ;; `completion_word_span' gives (3 3 5) on the line ":{{fo").
+  (with-temp-buffer
+    (insert "f\"{x!r \u0085\\\n")
+    (let ((bol (point)))
+      (insert ":{{fo")
+      (should (equal (lpy--completion-span)
+                     (list (+ bol 3) (+ bol 3) (point)))))))
+
 (ert-deftest lpy-nrepl-test-word-span-reads-past-narrowing ()
   ;; Defect: the context is read from `point-min', so narrowing to a
   ;; region that starts inside a multi-line string makes its text code.
