@@ -2262,8 +2262,8 @@ not re-lex the text above it.
 The invariant: a recorded state is a function of the text before
 FRONTIER alone.  STATE is the whole scan state at POS (no literal or
 field is open there; CLOSED and RESUMED are what the resume step and a
-later refusal's recovery read), and every read of the text goes through
-`lpy--word-read', which keeps FRONTIER past it: each token match or
+later refusal's recovery read), and every read of the text keeps
+FRONTIER past it, as `lpy--word-frontier' says: each token match or
 miss, body read, conversion-end search and character read, a
 rewinding refusal's read ahead included.  A read meeting the text's end,
 or an outcome STOP decided that the scan goes on past, moves FRONTIER
